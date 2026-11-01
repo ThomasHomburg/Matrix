@@ -394,22 +394,38 @@ watchlist:
   # v41 (2): Ereignis E = Rendite nach 12 Monaten >= +10 %
   ereignis_rendite_pct: 0.10
 
-# v42: Smart Money (13F-HR der Fonds aus SEC EDGAR).
-# CIK-Liste erweiterbar; User-Agent + Rate-Limit wie sec-Block (SEC-Policy).
+# v43: Smart Money (13F-HR der Fonds aus SEC EDGAR).
+# funds: je Fonds name/cik/typ/gewicht/positions_soll_max. Bekannte CIKs fest
+# hinterlegt; alle anderen CIKs werden per EDGAR-Firmensuche aufgeloest (nie raten).
+# Fehlt ein Fonds als 13F-HR-Filer -> im Fetch-Bericht nennen und ueberspringen.
+# typ: konzern | deep_value | qualitaet | konzentriert | makro | aktivist
+# gewicht 0 (aktivist) zaehlt NICHT im Score, nur Spalte Katalysator (13D/13D-A).
 smart_money:
-  fonds:
-    Berkshire:       {cik: "0001067983"}
-    Pershing Square: {cik: "0001336528"}
-    Duquesne:        {cik: "0001536411"}
-  max_requests_per_second: 5     # wie sec.max_requests_per_second (SEC-Policy)
+  funds:
+    - {name: "Berkshire Hathaway",                 cik: "0001067983", typ: konzern,      gewicht: 1.0, positions_soll_max: 50}
+    - {name: "Baupost Group",                     cik: "",           typ: deep_value,  gewicht: 1.0, positions_soll_max: 60}
+    - {name: "Himalaya Capital Management",       cik: "0001709323", typ: qualitaet,   gewicht: 1.0, positions_soll_max: 30}
+    - {name: "Pershing Square Capital Management", cik: "0001336528", typ: konzentriert, gewicht: 1.0, positions_soll_max: 20}
+    - {name: "Duquesne Family Office",            cik: "0001536411", typ: konzern,      gewicht: 0.5, positions_soll_max: 40}
+    - {name: "Akre Capital Management",           cik: "",           typ: qualitaet,   gewicht: 1.0, positions_soll_max: 40}
+    - {name: "Dalal Street LLC (Pabrai)",         cik: "",           typ: deep_value,  gewicht: 1.0, positions_soll_max: 20}
+    - {name: "Harris Associates",                 cik: "",           typ: qualitaet,   gewicht: 0.5, positions_soll_max: 100}
+    - {name: "Starboard Value",                   cik: "",           typ: aktivist,    gewicht: 0.0, positions_soll_max: 30}
+    - {name: "Elliott Investment Management",     cik: "",           typ: aktivist,    gewicht: 0.0, positions_soll_max: 30}
+  max_requests_per_second: 5      # SEC-Policy (wie sec.max_requests_per_second)
+  retry_429: {warte_s: 5, versuche: 3}   # Wiederholung bei HTTP 429
+  quarters: 8                     # letzte 8 Quartale 13F-HR je Fonds
   cusip_map_url: "https://api.openfigi.com/v3/mapping"  # CUSIP -> Ticker (POST)
-  # Fallback ohne OpenFIGI: SEC company_tickers.json (Ticker -> CIK, Rueckwaerts-Mapping)
+  cusip_map: {}                   # statisches CUSIP->Ticker (Fixtures/lokal); Rest OpenFIGI
+  googl_merge: {GOOGL: GOOG}      # gleiche Aktie je Fonds zusammenfassen
+  rationale_csv: "rationale_import.csv"  # Pflichtfeld quelle_url beim Import
   rules:
-    ein_fonds_anteil_max: 0.02     # Score 2: genau ein Fonds (neu/erhoeht), Anteil < 2 %
-    zwei_fonds_anteil_min: 0.05    # Score 3: >= 2 unabhaengige Fonds (neu/erhoeht) ODER Anteil >= 5 %
-    zwei_quartale: true            # Score 4: >= 2 Fonds neu/erhoeht ueber 2 Quartale + Rationale
-    verkauf_schwelle: 0.30         # Verkauf/Reduktion >= 30 % -> Score -1 je Fonds
-    verkauf_min_score: 1           # Score nie unter 1
+    ein_fonds_anteil_max: 0.02    # Score 2: ein Fonds (neu/erhoeht), Anteil < 2 %
+    gewicht_summe_min: 2.0        # Score 3: Summe Gewicht der Fonds mit neu/erhoeht >= 2,0
+    anteil_gewicht1_min: 0.05     # ... ODER Anteil >= 5 % in einem Fonds mit Gewicht 1,0
+    zwei_quartale: true           # Score 4: Score-3-Bedingung in 2 aufeinanderfolgenden Quartalen + Rationale
+    verkauf_schwelle: 0.30        # verkauft oder reduziert >= 30 % -> Score -1 je Fonds
+    verkauf_min_score: 1          # Score nie unter 1
 
 universe:
   # v28 (Schritt 8): Universumslader.

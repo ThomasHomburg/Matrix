@@ -94,32 +94,59 @@ CREATE TABLE IF NOT EXISTS decisions (
 CREATE INDEX IF NOT EXISTS idx_decisions_ticker ON decisions (ticker);
 CREATE INDEX IF NOT EXISTS idx_decisions_datum ON decisions (datum);
 
--- v42 (2): Smart Money -- 13F-Positionen je (Fonds, Ticker, Quartal)
+-- v43: Smart Money -- 13F-Positionen je (Fonds, Quartal, Ticker)
 CREATE TABLE IF NOT EXISTS smart_money_positions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    fonds           TEXT NOT NULL,             -- Fondsname (config smart_money.fonds)
+    fonds           TEXT NOT NULL,             -- Fondsname (config smart_money.funds)
+    quartal         TEXT NOT NULL,             -- YYYY-Qn aus periodOfReport
+    filing_datum    TEXT,                      -- ISO-Datum des (neuesten) 13F-Filings
     ticker          TEXT NOT NULL,
-    quartal         TEXT NOT NULL,             -- Quartal des 13F (YYYY-Qn, z. B. 2025-Q4)
+    shares          REAL,
+    wert            REAL,                      -- Marktwert USD (infotable: 1000 USD x 1000)
+    anteil_portfolio REAL,                     -- wert / Gesamtwert Aktien des Fonds-Quartals
     aktion          TEXT NOT NULL,             -- neu | erhoeht | reduziert | verkauft | unveraendert
-    shares          REAL,                      -- Aktien laut 13F
-    wert            REAL,                      -- Marktwert der Position (USD)
-    anteil_portfolio REAL,                     -- wert / Gesamtwert des Fonds-Quartals
     aenderung_pct   REAL,                      -- Veraenderung shares gg. Vorquartal
-    filing_datum    TEXT,                      -- Datum des 13F-Filings (ISO)
-    geladen_am      TEXT NOT NULL,             -- ISO-Zeitpunkt des Abrufs
-    UNIQUE (fonds, ticker, quartal)
+    positions_gesamt INTEGER,                  -- Anzahl Aktien-Positionen des Fonds im Quartal
+    rotation_pct    REAL,                      -- Umgeschichteter Wert / Portfoliowert Vorquartal
+    geladen_am      TEXT NOT NULL,
+    UNIQUE (fonds, quartal, ticker)
 );
 CREATE INDEX IF NOT EXISTS idx_smp_ticker ON smart_money_positions (ticker);
 CREATE INDEX IF NOT EXISTS idx_smp_quartal ON smart_money_positions (quartal);
 
--- v42 (2): Rationale (nur manuell oder per Import, immer mit Quelle)
+-- v43: Optionen (PUT/CALL) -- getrennt gefuehrt, zaehlen NICHT in Score/Anteil
+CREATE TABLE IF NOT EXISTS smart_money_options (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    fonds       TEXT NOT NULL,
+    quartal     TEXT NOT NULL,
+    filing_datum TEXT,
+    ticker      TEXT NOT NULL,                 -- gemappt (GOOGL->GOOG); sonst CUSIP
+    put_call    TEXT NOT NULL,                 -- PUT | CALL
+    shares      REAL,
+    wert        REAL,
+    geladen_am  TEXT NOT NULL,
+    UNIQUE (fonds, quartal, ticker, put_call)
+);
+
+-- v43: Katalysatoren (13D/13D-A der Aktivisten, gewicht 0)
+CREATE TABLE IF NOT EXISTS smart_money_katalysator (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker      TEXT NOT NULL,                 -- Ziel-Ticker des 13D
+    fonds       TEXT NOT NULL,                 -- aktivistischer Filer
+    datum       TEXT,                          -- filingDate des 13D/13D-A
+    quelle_url  TEXT,                          -- EDGAR-Archiv-URL
+    form        TEXT                           -- 13D | 13D-A
+);
+CREATE INDEX IF NOT EXISTS idx_smcat_ticker ON smart_money_katalysator (ticker);
+
+-- v42/v43: Rationale (nur manuell oder per Import rationale_import.csv, Pflicht quelle_url)
 CREATE TABLE IF NOT EXISTS smart_money_rationale (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker      TEXT NOT NULL,
-    fonds       TEXT,                          -- optional: bezogen auf Fonds
-    text        TEXT NOT NULL,                 -- Rationale-Text
-    quelle_url  TEXT,                          -- Quelle (Pflicht bei Import)
-    datum       TEXT,                          -- ISO-Datum der Aeusserung
-    typ         TEXT                           -- Brief | Interview | 13D | sonstiges
+    fonds       TEXT,
+    text        TEXT NOT NULL,
+    quelle_url  TEXT NOT NULL,                 -- Pflichtfeld
+    datum       TEXT,
+    typ         TEXT                           -- Brief | Interview | 13D | Sonstiges
 );
 CREATE INDEX IF NOT EXISTS idx_smr_ticker ON smart_money_rationale (ticker);
