@@ -394,6 +394,23 @@ watchlist:
   # v41 (2): Ereignis E = Rendite nach 12 Monaten >= +10 %
   ereignis_rendite_pct: 0.10
 
+# v42: Smart Money (13F-HR der Fonds aus SEC EDGAR).
+# CIK-Liste erweiterbar; User-Agent + Rate-Limit wie sec-Block (SEC-Policy).
+smart_money:
+  fonds:
+    Berkshire:       {cik: "0001067983"}
+    Pershing Square: {cik: "0001336528"}
+    Duquesne:        {cik: "0001536411"}
+  max_requests_per_second: 5     # wie sec.max_requests_per_second (SEC-Policy)
+  cusip_map_url: "https://api.openfigi.com/v3/mapping"  # CUSIP -> Ticker (POST)
+  # Fallback ohne OpenFIGI: SEC company_tickers.json (Ticker -> CIK, Rueckwaerts-Mapping)
+  rules:
+    ein_fonds_anteil_max: 0.02     # Score 2: genau ein Fonds (neu/erhoeht), Anteil < 2 %
+    zwei_fonds_anteil_min: 0.05    # Score 3: >= 2 unabhaengige Fonds (neu/erhoeht) ODER Anteil >= 5 %
+    zwei_quartale: true            # Score 4: >= 2 Fonds neu/erhoeht ueber 2 Quartale + Rationale
+    verkauf_schwelle: 0.30         # Verkauf/Reduktion >= 30 % -> Score -1 je Fonds
+    verkauf_min_score: 1           # Score nie unter 1
+
 universe:
   # v28 (Schritt 8): Universumslader.
   # sp500: Liste von der Wikipedia-Tabelle (pandas.read_html), wird als

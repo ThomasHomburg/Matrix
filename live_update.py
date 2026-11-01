@@ -60,7 +60,10 @@ MODI = ("avg3", "latest", "ttm", "ttm_only")
 OUT_COLS = ["ticker", "kurs", "status_screener", "status_live",
             "mos_live_min", "mos_live_robust", "kaufzone_kurs", "distanz_pct",
             "timing_status", "mom_12_1", "abstand_sma200", "revision_90d",
-            "wert_veraltet", "alarm", "naechster_earnings"]
+            "wert_veraltet", "alarm", "naechster_earnings",
+            # v42 (4): Smart Money
+            "smart_money_score", "fonds_kaeufer", "fonds_verkaeufer",
+            "letzte_aktion", "filing_datum", "rationale_vorhanden"]
 
 
 # --------------------------------------------------------------------------
@@ -261,7 +264,40 @@ def live_row(row: dict, kurs: float, cfg: dict, heute: date | None = None,
         "wert_veraltet": int(wert_veraltet),
         "alarm": int(alarm),
         "naechster_earnings": ne,
+        # v42 (4): Smart-Money-Spalten (DB optional -- ohne DB n/a)
+        "smart_money_score": "n/a",
+        "fonds_kaeufer": "",
+        "fonds_verkaeufer": "",
+        "letzte_aktion": "",
+        "filing_datum": "",
+        "rationale_vorhanden": "",
     }
+
+
+def attach_smart_money(out_rows: list[dict], cfg: dict, db_path: Path = Path("value_tracker.db")) -> None:
+    """v42 (4): fuellt die smart_money-Spalten je Watchlist-Ticker aus der DB
+    (smart_money_score). Ohne DB bleiben die Spalten 'n/a'."""
+    if not db_path.exists():
+        return
+    try:
+        import sqlite3 as _sq
+        con = _sq.connect(db_path)
+        tab = {r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        con.close()
+        if "smart_money_positions" not in tab:
+            return  # DB ohne smart_money-Tabellen -> Spalten bleiben n/a
+        from smart_money import smart_money_score
+        for r in out_rows:
+            s = smart_money_score(r["ticker"], cfg, db_path=db_path)
+            r["smart_money_score"] = s["score"]
+            r["fonds_kaeufer"] = ",".join(s["fonds_kaeufer"])
+            r["fonds_verkaeufer"] = ",".join(s["fonds_verkaeufer"])
+            r["letzte_aktion"] = s["letzte_aktion"]
+            r["filing_datum"] = s["filing_datum"]
+            r["rationale_vorhanden"] = "ja" if s["rationale_vorhanden"] else "nein"
+    except Exception as exc:
+        logger.warning("smart_money-Spalten nicht verfuegbar: %s", exc)
 
 
 def _fmt(v: float, spec: str) -> str:
@@ -286,7 +322,8 @@ def print_table(rows: list[dict]) -> None:
     header = (f"{'ticker':<8} {'kurs':>8} {'status_screener':<26} {'status_live':<12} "
               f"{'mos_min':>8} {'mos_rob':>8} {'kaufzone':>9} {'dist%':>7} "
               f"{'timing':<8} {'mom_12_1':>8} {'sma200%':>7} {'rev90d':>7} "
-              f"{'veraltet':<8} {'alarm':<6} naechster_earnings")
+              f"{'veraltet':<8} {'alarm':<6} {'sm':>3} {'kaeufer':<22} {'verkaeufer':<14} "
+              f"naechster_earnings")
     print(header)
     print("-" * len(header))
     for r in rows:
@@ -296,7 +333,10 @@ def print_table(rows: list[dict]) -> None:
               f"{_fmt(r['distanz_pct'], '>7.1%')} {(r['timing_status'] or 'n/a'):<8} "
               f"{_fmt(r['mom_12_1'], '>8.1%')} {_fmt(r['abstand_sma200'], '>7.1%')} "
               f"{_fmt(r['revision_90d'], '>7.1%')} "
-              f"{_fmt_flag(r['wert_veraltet']):<8} {_fmt_flag(r['alarm']):<6} {r['naechster_earnings']}")
+              f"{_fmt_flag(r['wert_veraltet']):<8} {_fmt_flag(r['alarm']):<6} "
+              f"{str(r.get('smart_money_score', 'n/a')):>3} "
+              f"{(r.get('fonds_kaeufer') or '')[:22]:<22} {(r.get('fonds_verkaeufer') or '')[:14]:<14} "
+              f"{r['naechster_earnings']}")
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -304,6 +344,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--ranking", required=True, help="ranking CSV aus run_ranking.py (v41 Export-Spalten)")
     p.add_argument("--out", default="watchlist_live.csv", help="Ausgabe-CSV (Default: watchlist_live.csv)")
     p.add_argument("--heute", default=None, help="Referenzdatum YYYY-MM-DD (Default: heute; Tests)")
+    p.add_argument("--db", default="value_tracker.db", help="SQLite-DB fuer smart_money-Spalten (v42)")
     p.add_argument("--batch", type=int, default=20, help="Batch-Groesse fuer Kursabruf")
     p.add_argument("--pause", type=float, default=2.0, help="Pause zwischen Batches in s")
     return p.parse_args(argv)
@@ -331,6 +372,7 @@ def main() -> None:
         row = rows_by_t.get(t) or {"ticker": t, "status": ""}
         out_rows.append(live_row(row, prices[t]["kurs"], cfg, heute=heute,
                                  vorheriger_kurs=prices[t].get("vorheriger", float("nan"))))
+    attach_smart_money(out_rows, cfg, db_path=Path(args.db))
     write_watchlist_csv(out_rows, args.out)
     print_table(out_rows)
     if errors:

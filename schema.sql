@@ -93,3 +93,33 @@ CREATE TABLE IF NOT EXISTS decisions (
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_ticker ON decisions (ticker);
 CREATE INDEX IF NOT EXISTS idx_decisions_datum ON decisions (datum);
+
+-- v42 (2): Smart Money -- 13F-Positionen je (Fonds, Ticker, Quartal)
+CREATE TABLE IF NOT EXISTS smart_money_positions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    fonds           TEXT NOT NULL,             -- Fondsname (config smart_money.fonds)
+    ticker          TEXT NOT NULL,
+    quartal         TEXT NOT NULL,             -- Quartal des 13F (YYYY-Qn, z. B. 2025-Q4)
+    aktion          TEXT NOT NULL,             -- neu | erhoeht | reduziert | verkauft | unveraendert
+    shares          REAL,                      -- Aktien laut 13F
+    wert            REAL,                      -- Marktwert der Position (USD)
+    anteil_portfolio REAL,                     -- wert / Gesamtwert des Fonds-Quartals
+    aenderung_pct   REAL,                      -- Veraenderung shares gg. Vorquartal
+    filing_datum    TEXT,                      -- Datum des 13F-Filings (ISO)
+    geladen_am      TEXT NOT NULL,             -- ISO-Zeitpunkt des Abrufs
+    UNIQUE (fonds, ticker, quartal)
+);
+CREATE INDEX IF NOT EXISTS idx_smp_ticker ON smart_money_positions (ticker);
+CREATE INDEX IF NOT EXISTS idx_smp_quartal ON smart_money_positions (quartal);
+
+-- v42 (2): Rationale (nur manuell oder per Import, immer mit Quelle)
+CREATE TABLE IF NOT EXISTS smart_money_rationale (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker      TEXT NOT NULL,
+    fonds       TEXT,                          -- optional: bezogen auf Fonds
+    text        TEXT NOT NULL,                 -- Rationale-Text
+    quelle_url  TEXT,                          -- Quelle (Pflicht bei Import)
+    datum       TEXT,                          -- ISO-Datum der Aeusserung
+    typ         TEXT                           -- Brief | Interview | 13D | sonstiges
+);
+CREATE INDEX IF NOT EXISTS idx_smr_ticker ON smart_money_rationale (ticker);
