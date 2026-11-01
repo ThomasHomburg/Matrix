@@ -83,28 +83,62 @@ AKTIONEN = ("neu", "erhoeht", "reduziert", "verkauft", "unveraendert")
 # HTTP (SEC-Policy: User-Agent + Rate-Limit + Retry bei 429) -- injizierbar
 # --------------------------------------------------------------------------
 
-class SecHttp:
-    """urllib-HTTP mit User-Agent, Rate-Limit und 429-Retry.
+class UserAgentError(Exception):
+    """v44 (1): ungueltiger User-Agent -- Abbruch VOR dem ersten Request."""
 
-    fetcher: optionale Funktion url -> bytes (Tests ohne Netz); bei 429 im
-    echten Netz: urllib wirft HTTPError 429 -> Retry nach retry_429.warte_s.
+
+def validate_user_agent(ua: str) -> str:
+    """v44 (1): SEC-Policy -- User-Agent im Format 'Name email@domain'.
+
+    Fehlt der Wert oder enthaelt er 'example', 'test' oder keinen '@'
+    -> UserAgentError mit klarer Meldung (Abbruch vor dem ersten Request).
+    """
+    ua = (ua or "").strip()
+    low = ua.lower()
+    if (not ua or "@" not in ua or "example" in low or "test" in low):
+        raise UserAgentError(
+            "Ungueltiger SEC User-Agent: "
+            f"{ua!r}. SEC-Policy verlangt 'Name email@domain' "
+            "(config.yaml: smart_money.user_agent, Fallback sec.user_agent). "
+            "Bitte echten Kontakt eintragen (z. B. 'Thomas Homburg name@domain.de').")
+    return ua
+
+
+def user_agent_from_cfg(cfg: dict) -> str:
+    """v44 (1): smart_money.user_agent, Fallback sec.user_agent; validiert."""
+    sm = cfg.get("smart_money", {})
+    ua = str(sm.get("user_agent") or cfg.get("sec", {}).get("user_agent") or "").strip()
+    return validate_user_agent(ua)
+
+
+class SecHttp:
+    """urllib-HTTP mit validiertem User-Agent, Rate-Limit und 403/429-Retry.
+
+    fetcher: optionale Funktion url -> bytes (Tests ohne Netz). Echte 403/429
+    (urllib HTTPError) -> bis zu `retry_tries` Wiederholungen mit den
+    Wartezeiten `retry_waits` (Default 2, 5, 10 s); danach Fehlerlog mit URL
+    und Header-Hinweis ('User-Agent pruefen').
     """
 
     def __init__(self, user_agent: str, max_rps: float = 5.0,
-                 retry_wait: float = 5.0, retry_tries: int = 3, fetcher=None):
-        self.user_agent = user_agent
+                 retry_waits=(2.0, 5.0, 10.0), retry_tries: int = 3,
+                 fetcher=None, errors: list | None = None, sleeper=time.sleep):
+        self.user_agent = validate_user_agent(user_agent)
         self.max_rps = max(0.1, float(max_rps))
-        self.retry_wait = float(retry_wait)
+        self.retry_waits = [float(w) for w in retry_waits]
         self.retry_tries = max(1, int(retry_tries))
         self._last = 0.0
         self._fetcher = fetcher
+        self.errors = errors if errors is not None else []
+        self._sleep = sleeper  # injizierbar fuer Tests (429/403 ohne Warten)
 
     def get(self, url: str, timeout: int = 30) -> bytes:
         gap = 1.0 / self.max_rps
+        last_exc = None
         for attempt in range(1, self.retry_tries + 1):
             wait = self._last + gap - time.monotonic()
             if wait > 0:
-                time.sleep(wait)
+                self._sleep(wait)
             self._last = time.monotonic()
             if self._fetcher is not None:
                 return self._fetcher(url)
@@ -113,11 +147,20 @@ class SecHttp:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
                     return r.read()
             except urllib.error.HTTPError as exc:
-                if exc.code == 429 and attempt < self.retry_tries:
-                    logger.warning("SEC 429 fuer %s -- Retry %d/%d in %.0fs",
-                                   url, attempt, self.retry_tries - 1, self.retry_wait)
-                    time.sleep(self.retry_wait)
+                last_exc = exc
+                if exc.code in (403, 429) and attempt < self.retry_tries:
+                    w = self.retry_waits[min(attempt - 1, len(self.retry_waits) - 1)]
+                    logger.warning("SEC HTTP %d fuer %s -- Retry %d/%d in %.0fs (User-Agent: %r)",
+                                   exc.code, url, attempt, self.retry_tries - 1, w, self.user_agent)
+                    self._sleep(w)
                     continue
+                if exc.code in (403, 429):
+                    self.errors.append({
+                        "url": url, "http_code": exc.code,
+                        "error": (f"HTTP {exc.code} nach {self.retry_tries} Versuchen -- "
+                                  f"User-Agent pruefen (gesendet: {self.user_agent!r})")})
+                    logger.error("SEC HTTP %d fuer %s -- aufgegeben. User-Agent pruefen "
+                                 "(config smart_money.user_agent / sec.user_agent)", exc.code, url)
                 raise
 
 
@@ -129,39 +172,116 @@ def _sec_base() -> str:
 # CIK-Aufloesung per EDGAR-Firmensuche (nie raten)
 # --------------------------------------------------------------------------
 
-def resolve_cik(name: str, http: SecHttp) -> str | None:
-    """CIK per EDGAR company search (efts.sec.gov/LATEST/search-index?q=...)
-    bzw. submissions companysearch. Rueckgabe: CIK (10-stellig) oder None."""
-    import urllib.parse
-    q = urllib.parse.quote(f'"{name}"')
-    url = f"https://efts.sec.gov/LATEST/search-index?q={q}&dateRange=custom&forms=13F-HR"
+def _validate_cik_13f(cik: str, http: SecHttp) -> dict | None:
+    """v44 (2): CIK validieren -- data.sec.gov/submissions/CIK##########.json muss
+    mindestens ein 13F-HR enthalten. Rueckgabe: {name, cik, last_13f_hr, n_13f}
+    oder None (kein Filer)."""
+    cik10 = str(cik).zfill(10)
+    url = f"https://data.sec.gov/submissions/CIK{cik10}.json"
     try:
-        raw = http.get(f"https://efts.sec.gov/LATEST/search-index?q={q}")
-        data = json.loads(raw.decode("utf-8"))
-        hits = data.get("hits", {}).get("hits", [])
-        for h in hits:
-            src = h.get("_source", {})
-            cik = src.get("cik")
-            if cik:
-                return str(cik).zfill(10)
+        data = json.loads(http.get(url).decode("utf-8"))
     except Exception as exc:
-        logger.warning("CIK-Suche fuer '%s' fehlgeschlagen: %s", name, exc)
-    return None
+        logger.warning("submissions-Validierung CIK %s fehlgeschlagen: %s", cik10, exc)
+        return None
+    rec = data.get("filings", {}).get("recent", {})
+    forms = rec.get("form", [])
+    dates = rec.get("filingDate", [])
+    last13f = ""
+    for form, d in zip(forms, dates):
+        if str(form).startswith("13F-HR"):
+            last13f = max(last13f, str(d))
+    n = sum(1 for f in forms if str(f).startswith("13F-HR"))
+    if n == 0:
+        return None  # kein 13F-HR-Filer
+    return {"name": data.get("name", ""), "cik": cik10,
+            "last_13f_hr": last13f, "n_13f": n}
+
+
+def search_company_13f(name: str, http: SecHttp) -> list[dict]:
+    """v44 (2): EDGAR-Firmensuche -- cgi-bin/browse-edgar?action=getcompany&
+    company=<Name>&type=13F-HR&output=atom. Rueckgabe: Trefferliste
+    [{cik, name, last_13f_hr}] (validiert via submissions; nur 13F-HR-Filer).
+    Mehrere Kandidaten -> volle Liste, KEIN Auto-Pick."""
+    import urllib.parse
+    q = urllib.parse.quote(name)
+    url = (f"{_sec_base()}/cgi-bin/browse-edgar?action=getcompany&company={q}"
+           f"&type=13F-HR&dateb=&owner=include&count=40&output=atom")
+    try:
+        raw = http.get(url)
+        root = ET.fromstring(raw)
+    except Exception as exc:
+        logger.warning("Firmensuche '%s' fehlgeschlagen: %s", name, exc)
+        return []
+    hits = []
+    seen = set()
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    for e in root.findall("a:entry", ns):
+        link = e.find("a:link", ns)
+        title = e.find("a:title", ns)
+        if link is None:
+            continue
+        href = link.get("href", "")
+        m = None
+        import re as _re
+        m = _re.search(r"CIK=([^&]+)", href)
+        if not m:
+            # Alternativ: CIK im Pfad /Archives/edgar/data/<cik>/
+            m2 = _re.search(r"/data/(\d+)/", href)
+            m = m2
+        if not m:
+            continue
+        cik = str(int(m.group(1))).zfill(10)
+        if cik in seen:
+            continue
+        seen.add(cik)
+        name_e = title.text if title is not None else ""
+        v = _validate_cik_13f(cik, http)
+        if v:  # nur Filer mit 13F-HR
+            hits.append({"cik": cik, "name": v["name"] or name_e,
+                         "last_13f_hr": v["last_13f_hr"]})
+    return hits
 
 
 def resolve_all_ciks(cfg: dict, http: SecHttp) -> list[dict]:
-    """Loest alle funds ohne cik per EDGAR auf. Rueckgabe:
-    [{name, cik, filer_status: '13F-HR'|'nicht gefunden'|'bekannt'}]."""
+    """v44 (2): CIK-Aufloesung je Fonds, Reihenfolge:
+    (a) cik aus config.yaml (validiert: mindestens ein 13F-HR in submissions),
+    (b) EDGAR-Firmensuche mit Namensvarianten (config smart_money.name_variants)
+        -> Trefferliste ins Report, NICHTS automatisch uebernehmen,
+    (c) sonst 'manuell eintragen'.
+    Rueckgabe: [{name, cik, filer_status, treffer: [...]|None}]."""
+    sm = cfg.get("smart_money", {})
+    variants = sm.get("name_variants", {}) or {}
     out = []
-    for f in cfg.get("smart_money", {}).get("funds", []):
+    for f in sm.get("funds", []):
+        name = f.get("name", "")
         cik = str(f.get("cik") or "").strip()
         if cik:
-            status = "bekannt"
-            resolved = cik.zfill(10)
+            v = _validate_cik_13f(cik, http)
+            if v:
+                out.append({"name": name, "cik": v["cik"], "filer_status": "13F-HR (config)",
+                            "bericht_name": v["name"], "last_13f_hr": v["last_13f_hr"],
+                            "treffer": None})
+            else:
+                out.append({"name": name, "cik": cik.zfill(10), "filer_status": "kein Filer",
+                            "bericht_name": "", "last_13f_hr": "", "treffer": None})
+            continue
+        # (b) Namensvarianten suchen
+        treffer: list[dict] = []
+        seen = set()
+        names = variants.get(name, [name])
+        if isinstance(names, str):
+            names = [names]
+        for nv in names:
+            for h in search_company_13f(nv, http):
+                if h["cik"] not in seen:
+                    seen.add(h["cik"])
+                    treffer.append(h)
+        if treffer:
+            out.append({"name": name, "cik": "", "filer_status": "manuell eintragen",
+                        "bericht_name": "", "last_13f_hr": "", "treffer": treffer})
         else:
-            resolved = resolve_cik(f["name"], http) or ""
-            status = "13F-HR" if resolved else "nicht gefunden"
-        out.append({"name": f["name"], "cik": resolved, "filer_status": status})
+            out.append({"name": name, "cik": "", "filer_status": "manuell eintragen",
+                        "bericht_name": "", "last_13f_hr": "", "treffer": []})
     return out
 
 
@@ -486,12 +606,15 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
     """
     sm = cfg.get("smart_money", {})
     nq = int(quarters if quarters is not None else sm.get("quarters", 8))
-    r429 = sm.get("retry_429", {})
-    http = SecHttp(str(cfg.get("sec", {}).get("user_agent", "Value-Screener research@example.com")),
-                   float(sm.get("max_requests_per_second", 5.0)),
-                   float(r429.get("warte_s", 5.0)), int(r429.get("versuche", 3)), fetcher=fetcher)
-    con = connect(db_path)
+    r = sm.get("retry_403_429", {})
     errors: list[dict] = []
+    # v44 (1): User-Agent aus smart_money.user_agent (Fallback sec.user_agent),
+    # validiert -- bei ungueltigem Wert Abbruch VOR dem ersten Request
+    http = SecHttp(user_agent_from_cfg(cfg),
+                   float(sm.get("max_requests_per_second", 5.0)),
+                   tuple(r.get("wartezeiten_s", [2, 5, 10])), int(r.get("versuche", 3)),
+                   fetcher=fetcher, errors=errors)
+    con = connect(db_path)
     ciks = resolve_all_ciks(cfg, http)
     if report is not None:
         report.extend(ciks)
@@ -499,8 +622,9 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
     for entry in ciks:
         name, cik = entry["name"], entry["cik"]
         if not cik:
-            logger.warning("smart_money: %s nicht als 13F-HR-Filer gefunden -> uebersprungen", name)
-            errors.append({"fonds": name, "error": "kein CIK aufloesbar / kein 13F-HR-Filer"})
+            logger.warning("smart_money: %s -> %s -> uebersprungen (CIK manuell in config.yaml smart_money.funds eintragen; Treffer siehe Bericht)",
+                           name, entry["filer_status"])
+            errors.append({"fonds": name, "error": f"{entry['filer_status']} -- manuell eintragen"})
             continue
         fcfg = funds.get(name, {})
         gew = float(fcfg.get("gewicht", 1.0))
@@ -774,9 +898,13 @@ def cmd_fetch(args) -> None:
     cfg = load_config()
     report: list[dict] = []
     errors = fetch_all(cfg, quarters=args.quarters, db_path=Path(args.db), report=report)
-    print("\n=== CIK-Aufloesung + Filer-Status ===")
+    print("\n=== CIK-Aufloesung + Filer-Status (v44: config -> Firmensuche -> manuell) ===")
     for e in report:
-        print(f"  {e['name']:<38} cik={e['cik'] or '-':<12} {e['filer_status']}")
+        print(f"  {e['name']:<38} cik={e['cik'] or '-':<12} {e['filer_status']}"
+              + (f" | EDGAR-Name: {e.get('bericht_name') or '-'}"
+                 f" | letztes 13F-HR: {e.get('last_13f_hr') or '-'}" if e.get("cik") else ""))
+        for t in (e.get("treffer") or []):
+            print(f"      Treffer: cik={t['cik']} name={t['name']!r} letztes 13F-HR={t['last_13f_hr']}")
     if errors:
         print(f"\nFehlerlog ({len(errors)}):")
         for e in errors:
@@ -816,10 +944,14 @@ def cmd_ciks(args) -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     cfg = load_config()
     sm = cfg.get("smart_money", {})
-    http = SecHttp(str(cfg.get("sec", {}).get("user_agent", "x")),
+    http = SecHttp(user_agent_from_cfg(cfg),
                    float(sm.get("max_requests_per_second", 5.0)))
     for e in resolve_all_ciks(cfg, http):
-        print(f"{e['name']:<38} cik={e['cik'] or '-':<12} {e['filer_status']}")
+        print(f"{e['name']:<38} cik={e['cik'] or '-':<12} {e['filer_status']}"
+              + (f" | {e.get('bericht_name') or ''} letztes 13F-HR {e.get('last_13f_hr') or ''}"
+                 if e.get("cik") else ""))
+        for t in (e.get("treffer") or []):
+            print(f"    Treffer: cik={t['cik']} name={t['name']!r} letztes 13F-HR={t['last_13f_hr']}")
 
 
 def cmd_rationale_import(args) -> None:
