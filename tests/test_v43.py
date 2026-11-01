@@ -41,9 +41,11 @@ def _cfg():
          "typ": "konzentriert", "gewicht": 1.0, "positions_soll_max": 20},
         {"name": "Duquesne Family Office", "cik": CIK["Duquesne Family Office"], "typ": "konzern",
          "gewicht": 0.5, "positions_soll_max": 40},
-        {"name": "Starboard Value", "cik": "", "typ": "aktivist", "gewicht": 0.0,
+        {"name": "Starboard Value", "cik": "0009999999", "typ": "aktivist", "gewicht": 0.0,
          "positions_soll_max": 30},
     ]
+    # v44: Namensvarianten-Test separat in test_v44 (hier soll Starboard gefetcht werden)
+    sm["name_variants"] = {"Starboard Value": ["Starboard Value"]}
     sm["cusip_map"] = {v: k for k, v in CUSIP.items()}
     sm["max_requests_per_second"] = 100000
     cfg["smart_money"] = sm
@@ -63,13 +65,19 @@ def _infotable(holdings, options=()) -> bytes:
 
 
 def _atom(entries) -> bytes:
-    items = "".join(
-        f'<entry><title>{t}</title><updated>{d}T00:00:00Z</updated>'
-        f'<category term="{form} {rep}"/>'
-        f'<link href="https://www.sec.gov/Archives/edgar/data/{cik_n}/{acc}/"/></entry>'
-        for acc, d, form, rep, t, cik_n in entries)
+    items = []
+    for e in entries:
+        if len(e) == 7:
+            acc, d, form, rep, t, cik_n, href = e
+        else:
+            acc, d, form, rep, t, cik_n = e
+            href = f"https://www.sec.gov/Archives/edgar/data/{cik_n}/{acc}/"
+        items.append(
+            f'<entry><title>{t}</title><updated>{d}T00:00:00Z</updated>'
+            f'<category term="{form} {rep}"/>'
+            f'<link href="{href}"/></entry>')
     return ('<?xml version="1.0"?>'
-            f'<feed xmlns="http://www.w3.org/2005/Atom">{items}</feed>').encode()
+            f'<feed xmlns="http://www.w3.org/2005/Atom">{"".join(items)}</feed>').encode()
 
 
 # Fixture-Holdings je Fonds/Quartal. Q2 von Berkshire hat zusaetzlich eine
@@ -102,12 +110,39 @@ OPTIONS = {"1067983": (1, [("111111111", "AAA Corp", "CALL", 100.0, 10.0)])}  # 
 def _make_fetcher():
     def fetcher(url: str) -> bytes:
         if "efts.sec.gov" in url:
-            # EDGAR-Firmensuche: Starboard -> CIK 0009999999
-            return json.dumps({"hits": {"hits": [
-                {"_source": {"cik": 9999999, "title": "STARBOARD VALUE LP"}}]}}).encode()
+            # v43-alt; v44 nutzt browse-edgar getcompany -- hier leer
+            return json.dumps({"hits": {"hits": []}}).encode()
+        if "submissions/CIK" in url:
+            # submissions-Validierung: CIKs mit/ohne 13F-HR
+            cik10 = url.split("submissions/CIK")[1].split(".")[0]
+            if cik10 in ("0001067983", "0001336528", "0001536411", "0009999999", "0008888888"):
+                forms = ["13F-HR", "13F-HR", "10-K"] * 3
+                dates = ["2025-08-15", "2025-05-15", "2025-04-01"] * 3
+                return json.dumps({"name": {"0001067983": "BERKSHIRE HATHAWAY INC",
+                                            "0001336528": "PERSHING SQUARE CAPITAL MANAGEMENT LLC",
+                                            "0001536411": "DUQUESNE FAMILY OFFICE LLC",
+                                            "0009999999": "STARBOARD VALUE LP",
+                                            "0008888888": "STARBOARD VALUE & OPPORTUNITY FUND LTD"}[cik10],
+                                   "filings": {"recent": {"form": forms, "filingDate": dates}}}).encode()
+            return json.dumps({"name": "NO FILER INC",
+                               "filings": {"recent": {"form": ["10-K"], "filingDate": ["2025-04-01"]}}}).encode()
+        if "action=getcompany&company=" in url:
+            # v44 Firmensuche: Starboard -> zwei Kandidaten (kein Auto-Pick)
+            import urllib.parse as _up
+            q = _up.parse_qs(_up.urlparse(url).query)["company"][0]
+            if "starboard" in q.lower():
+                return _atom([
+                    ("x", "2025-07-01", "", "", "STARBOARD VALUE LP",
+                     9999999, "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0009999999"),
+                    ("x", "2025-06-01", "", "", "STARBOARD VALUE &amp; OPPORTUNITY FUND",
+                     8888888, "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0008888888"),
+                ])
+            return _atom([])
         if "browse-edgar" in url and "type=SC+13D" in url:
-            return _atom([("999999900000000001", "2025-07-01", "SC 13D", "", "SC 13D", 9999999)])
-        if "browse-edgar" in url:
+            return _atom([("999999900000000001", "2025-07-01", "SC 13D", "2025-07-01", "SC 13D", 9999999)])
+        if "action=getcompany&company=" in url and "type=13F" in url and "type=SC+13D" not in url:
+            pass  # faellt weiter unten in den getcompany-Block
+        if "browse-edgar" in url and "action=getcompany&company=" not in url:
             for cik_n, data in (("1067983", None), ("1336528", None), ("1536411", None), ("9999999", None)):
                 if f"CIK={cik_n}" in url:
                     entries = []
@@ -147,7 +182,8 @@ def sm_db(tmp_path):
     db = tmp_path / "sm.db"
     report = []
     errors = smart_money.fetch_all(cfg, quarters=2, db_path=db, fetcher=_make_fetcher(), report=report)
-    assert not [e for e in errors if e.get("fonds")], errors
+    # v44: Fonds ohne CIK sind 'manuell eintragen' (kein harter Fehler mehr)
+    assert not [e for e in errors if e.get("fonds") and "manuell" not in e["error"]], errors
     return cfg, db, report
 
 
@@ -334,9 +370,16 @@ def test_overlap_csv(sm_db, tmp_path):
 def test_cik_aufloesung(sm_db):
     cfg, db, report = sm_db
     by = {e["name"]: e for e in report}
-    assert by["Berkshire Hathaway"]["filer_status"] == "bekannt"
-    assert by["Starboard Value"]["cik"] == "0009999999"      # per EDGAR-Suche aufgeloest
-    assert by["Starboard Value"]["filer_status"] == "13F-HR"
+    # (a) CIK aus config -> validiert mit EDGAR-Name + letztem 13F-HR
+    assert by["Berkshire Hathaway"]["cik"] == "0001067983"
+    assert by["Berkshire Hathaway"]["filer_status"] == "13F-HR (config)"
+    assert by["Berkshire Hathaway"]["bericht_name"] == "BERKSHIRE HATHAWAY INC"
+    assert by["Berkshire Hathaway"]["last_13f_hr"] == "2025-08-15"
+    # Starboard hat CIK in config -> validiert
+    sb = by["Starboard Value"]
+    assert sb["cik"] == "0009999999"
+    assert sb["filer_status"] == "13F-HR (config)"
+    # Namensvarianten-Suche (leer CIK) testen wir separat in test_v44
 
 
 # --- Regression: watchlist_live-Spalten ----------------------------------------
