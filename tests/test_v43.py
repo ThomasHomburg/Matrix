@@ -48,6 +48,7 @@ def _cfg():
     sm["name_variants"] = {"Starboard Value": ["Starboard Value"]}
     sm["cusip_map"] = {v: k for k, v in CUSIP.items()}
     sm["max_requests_per_second"] = 100000
+    sm.pop("user_agent", None)  # v44: Fallback auf sec.user_agent ("Tom Homburg t09homburg@gmail.com")
     cfg["smart_money"] = sm
     return cfg
 
