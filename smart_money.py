@@ -142,39 +142,84 @@ class SecHttp:
         self._sleep = sleeper  # injizierbar fuer Tests (429/403 ohne Warten)
 
     def get(self, url: str, timeout: int = 30) -> bytes:
+        """v45 (2): laeuft ueber die zentrale sec_get() (Header User-Agent +
+        Accept-Encoding gzip + Host bei jedem Request). 403/429 -> Retries."""
         gap = 1.0 / self.max_rps
-        last_exc = None
         for attempt in range(1, self.retry_tries + 1):
             wait = self._last + gap - time.monotonic()
             if wait > 0:
                 self._sleep(wait)
             self._last = time.monotonic()
-            if self._fetcher is not None:
-                return self._fetcher(url)
-            req = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
-            try:
-                with urllib.request.urlopen(req, timeout=timeout) as r:
-                    return r.read()
-            except urllib.error.HTTPError as exc:
-                last_exc = exc
-                if exc.code in (403, 429) and attempt < self.retry_tries:
+            status, body, _hdrs = sec_get(url, self.user_agent, timeout=timeout,
+                                          fetcher=self._fetcher, sleeper=self._sleep)
+            if status == 200:
+                return body
+            if status in (403, 429):
+                if attempt < self.retry_tries:
                     w = self.retry_waits[min(attempt - 1, len(self.retry_waits) - 1)]
                     logger.warning("SEC HTTP %d fuer %s -- Retry %d/%d in %.0fs (User-Agent: %r)",
-                                   exc.code, url, attempt, self.retry_tries - 1, w, self.user_agent)
+                                   status, url, attempt, self.retry_tries - 1, w, self.user_agent)
                     self._sleep(w)
                     continue
-                if exc.code in (403, 429):
-                    self.errors.append({
-                        "url": url, "http_code": exc.code,
-                        "error": (f"HTTP {exc.code} nach {self.retry_tries} Versuchen -- "
-                                  f"User-Agent pruefen (gesendet: {self.user_agent!r})")})
-                    logger.error("SEC HTTP %d fuer %s -- aufgegeben. User-Agent pruefen "
-                                 "(config smart_money.user_agent / sec.user_agent)", exc.code, url)
-                raise
+                self.errors.append({
+                    "url": url, "http_code": status,
+                    "antwort_beginn": body[:200].decode("utf-8", "replace"),
+                    "error": (f"HTTP {status} nach {self.retry_tries} Versuchen -- "
+                              f"User-Agent pruefen (gesendet: {self.user_agent!r}); "
+                              f"Antwortbeginn: {body[:120].decode('utf-8', 'replace')!r}")})
+                logger.error("SEC HTTP %d fuer %s -- aufgegeben. User-Agent pruefen "
+                             "(config sec.user_agent); Antwortbeginn: %r",
+                             status, url, body[:120])
+            raise urllib.error.HTTPError(url, status, f"HTTP {status}", {}, None)
 
 
 def _sec_base() -> str:
     return "https://www.sec.gov"
+
+
+def sec_get(url: str, user_agent: str, timeout: int = 30,
+            fetcher=None, sleeper=time.sleep) -> tuple[int, bytes, dict]:
+    """v45 (2): ALLE SEC-Requests laufen ueber diese eine Funktion.
+
+    Sendet immer ein urllib.request.Request-Objekt mit den Headern:
+      User-Agent (aus sec.user_agent / smart_money.user_agent),
+      Accept-Encoding: gzip,
+      Host (aus der URL).
+    gzip-Antworten werden entpackt. Rueckgabe: (status, body, headers).
+    fetcher: url -> bytes (Tests ohne Netz; Status dann 200).
+
+    WICHTIG: urllib.request.urlopen(url_string) OHNE Request-Objekt wuerde
+    den Default-UA "Python-urllib/3.x" senden -- SEC antwortet dann 403.
+    (Geprueft in smart_money.py + data/sec.py: alle Aufrufe nutzen Request.)
+    """
+    import gzip as _gzip
+    import urllib.parse as _up
+    parsed = _up.urlparse(url)
+    host = parsed.netloc
+    headers = {
+        "User-Agent": user_agent,
+        "Accept-Encoding": "gzip",
+        "Host": host,
+        "Accept": "application/json, text/xml, application/xml, */*",
+        "Connection": "close",
+    }
+    if fetcher is not None:
+        return 200, fetcher(url), {"User-Agent": user_agent, "Host": host}
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read()
+            hdrs = dict(r.headers)
+            status = getattr(r, "status", 200)
+    except urllib.error.HTTPError as exc:
+        body = exc.read() if hasattr(exc, "read") else b""
+        return exc.code, body, dict(exc.headers or {})
+    if "gzip" in str(hdrs.get("Content-Encoding", "")):
+        try:
+            body = _gzip.decompress(body)
+        except Exception:
+            pass
+    return status, body, hdrs
 
 
 # --------------------------------------------------------------------------
@@ -435,14 +480,22 @@ def _atom_entries(xml_bytes: bytes) -> list[dict]:
 
 
 def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dict]:
-    """Letzte 13F-HR (+13F-HR/A) eines CIK. Bei Nachmeldung (A) ersetzt die
-    neuere Fassung das Original zum selben report_date (neueste filing_date gewinnt)."""
-    cik_n = str(int(str(cik).lstrip("0") or "0"))
-    url = (f"{_sec_base()}/cgi-bin/browse-edgar?action=getcompany&CIK={cik_n}"
-           f"&type=13F&dateb=&owner=include&count={max_filings * 3}&output=atom")
-    entries = _atom_entries(http.get(url))
-    hr = [e for e in entries if e["form"].startswith("13F-HR")]
-    # neueste Fassung je report_date (13F-HR/A mit spaeterem filing_date gewinnt)
+    """v45 (4): letzte 13F-HR (+13F-HR/A) eines CIK -- OHNE cgi-bin:
+    submissions-JSON (data.sec.gov/submissions/CIK##########.json) ->
+    Accession + periodOfReport + filingDate -> Archives-Verzeichnis.
+    Bei Nachmeldung (A) ersetzt die neuere Fassung das Original zum selben
+    report_date (neueste filing_date gewinnt)."""
+    cik10 = str(cik).zfill(10)
+    url = f"https://data.sec.gov/submissions/CIK{cik10}.json"
+    data = json.loads(http.get(url).decode("utf-8"))
+    rec = data.get("filings", {}).get("recent", {})
+    accessions = rec.get("accessionNumber", [])
+    forms = rec.get("form", [])
+    dates = rec.get("filingDate", [])
+    reports = rec.get("reportDate", [])
+    hr = [{"accession": a, "filing_date": d, "form": f, "report_date": r}
+          for a, f, d, r in zip(accessions, forms, dates, reports)
+          if str(f).startswith("13F-HR")]
     best: dict[str, dict] = {}
     for e in hr:
         rd = e["report_date"]
@@ -461,8 +514,12 @@ def list_13d_filings(cik: str, http: SecHttp, max_filings: int = 20) -> list[dic
     return [e for e in entries if e["form"] in ("SC 13D", "SC 13D/A", "13D", "13D-A")][:max_filings]
 
 
-def load_13f_quarter(cik: str, accession: str, http: SecHttp) -> tuple[str, list[dict], list[dict]]:
-    """Laedt infotable.xml eines 13F. Rueckgabe: (report_date, holdings, options)."""
+def load_13f_quarter(cik: str, accession: str, http: SecHttp,
+                     report_date: str = "") -> tuple[str, list[dict], list[dict]]:
+    """v45 (4): laedt infotable.xml ueber Archives-Verzeichnis (kein cgi-bin):
+    Archives/edgar/data/<cik>/<accession ohne '-'>/infotable.xml.
+    report_date kommt aus dem submissions-JSON (Parameter), Fallback: primary_doc.
+    Rueckgabe: (report_date, holdings, options)."""
     acc = accession.replace("-", "")
     cik_n = str(int(str(cik).lstrip("0") or "0"))
     base = f"{_sec_base()}/Archives/edgar/data/{cik_n}/{acc}"
@@ -470,20 +527,20 @@ def load_13f_quarter(cik: str, accession: str, http: SecHttp) -> tuple[str, list
     items = idx.get("directory", {}).get("item", [])
     infotable = next((i["name"] for i in items if i.get("name", "").lower() == "infotable.xml"),
                      "infotable.xml")
-    report_date = ""
-    for item in items:
-        n = item.get("name", "")
-        if n.endswith(".xml") and "infotable" not in n.lower():
-            try:
-                mroot = ET.fromstring(http.get(f"{base}/{n}"))
-                for el in mroot.iter():
-                    if el.tag.split("}")[-1] == "periodOfReport" and el.text:
-                        report_date = el.text.strip()[:10]
+    if not report_date:
+        for item in items:
+            n = item.get("name", "")
+            if n.endswith(".xml") and "infotable" not in n.lower():
+                try:
+                    mroot = ET.fromstring(http.get(f"{base}/{n}"))
+                    for el in mroot.iter():
+                        if el.tag.split("}")[-1] == "periodOfReport" and el.text:
+                            report_date = el.text.strip()[:10]
+                            break
+                    if report_date:
                         break
-                if report_date:
-                    break
-            except Exception:
-                continue
+                except Exception:
+                    continue
     holdings, options = _parse_infotable(http.get(f"{base}/{infotable}"))
     return report_date, holdings, options
 
@@ -646,7 +703,8 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                 continue
             qdata: list[tuple[str, str, list, list]] = []
             for f in filings:
-                rd, holdings, options = load_13f_quarter(cik, f["accession"], http)
+                rd, holdings, options = load_13f_quarter(cik, f["accession"], http,
+                                                          report_date=f.get("report_date", ""))
                 qdata.append((rd or f["report_date"], f["filing_date"], holdings, options))
             qdata.sort(key=lambda x: x[0])
             qdata = qdata[-nq:]
@@ -903,8 +961,38 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
 # CLI
 # --------------------------------------------------------------------------
 
+DIAG_URLS = [
+    "https://data.sec.gov/submissions/CIK0001067983.json",
+    "https://www.sec.gov/Archives/edgar/data/1067983/",
+    "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=1067983&type=13F-HR&dateb=&owner=include&count=5&output=atom",
+]
+
+
+def cmd_diagnose(args) -> None:
+    """v45 (1): Diagnose -- Config-Pfad (absolut), gesendeter User-Agent und
+    je Test-URL HTTP-Status + erste 200 Zeichen der Antwort."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    from config import config_path_info
+    cfg_path = config_path_info()
+    print(f"Config-Pfad (absolut): {cfg_path}")
+    cfg = load_config(cfg_path)
+    ua = user_agent_from_cfg(cfg)
+    print(f"User-Agent (gesendet): {ua!r}")
+    print(f"sec.user_agent: {cfg.get('sec', {}).get('user_agent')!r}  "
+          f"smart_money.user_agent: {cfg.get('smart_money', {}).get('user_agent')!r}")
+    for url in DIAG_URLS:
+        try:
+            status, body, _h = sec_get(url, ua)
+            print(f"  [{status}] {url}")
+            print(f"         Antwortbeginn: {body[:200].decode('utf-8', 'replace')!r}")
+        except Exception as exc:
+            print(f"  [FEHLER] {url}: {exc}")
+
+
 def cmd_fetch(args) -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    from config import config_path_info
+    print(f"Config-Pfad (absolut): {config_path_info()}")  # v45 (3): beim Start ausgeben
     cfg = load_config()
     report: list[dict] = []
     errors = fetch_all(cfg, quarters=args.quarters, db_path=Path(args.db), report=report)
@@ -1021,6 +1109,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_o.set_defaults(func=cmd_overlap)
     p_c = sub.add_parser("ciks", help="CIK-Aufloesung + 13F-Filer-Status aller Fonds")
     p_c.set_defaults(func=cmd_ciks)
+    p_d = sub.add_parser("diagnose", help="v45: Config-Pfad, User-Agent, HTTP-Status je Test-URL")
+    p_d.set_defaults(func=cmd_diagnose)
     p_r = sub.add_parser("rationale-import", help="Rationale aus CSV importieren (Pflicht quelle_url)")
     p_r.add_argument("csv_file", nargs="?", default=None,
                      help="Default: config smart_money.rationale_csv (rationale_import.csv)")
@@ -1033,6 +1123,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args(sys.argv[1:])
+    from config import config_path_info
+    if getattr(args, "cmd", None) != "diagnose":
+        print(f"Config-Pfad (absolut): {config_path_info()}")  # v45 (3)
     if getattr(args, "cmd", None) == "rationale-import" and not getattr(args, "csv_file", None):
         cfg = load_config()
         args.csv_file = cfg.get("smart_money", {}).get("rationale_csv", "rationale_import.csv")

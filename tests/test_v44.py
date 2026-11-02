@@ -140,10 +140,10 @@ def test_http_429_retries_und_fehlerlog(monkeypatch):
 
 def test_http_200_kein_retry(monkeypatch):
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, sleeper=lambda s: None)
-    monkeypatch.setattr(urllib.request, "urlopen",
-                        lambda req, timeout=30: BytesIO(b'{"ok": true}'))
-    # BytesIO unterstuetzt read() wie ein Response
+
     class Resp(BytesIO):
+        status = 200
+        headers = {"Content-Encoding": "identity"}
         def __enter__(self):
             return self
         def __exit__(self, *a):
