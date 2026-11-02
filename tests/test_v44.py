@@ -24,7 +24,7 @@ from config import load_config
 import smart_money
 
 
-VALID_UA = "Thomas Homburg t09homburg@gmail.com"
+VALID_UA = "Tom Homburg t09homburg@gmail.com"  # sec.user_agent aus uebernommener config.yaml
 
 
 def _cfg(**sm_over):
@@ -46,6 +46,7 @@ def _cfg(**sm_over):
 def test_ungueltiger_user_agent_abbruch_vor_request(bad):
     cfg = _cfg(user_agent=bad)
     cfg["sec"]["user_agent"] = bad
+    cfg["sec"]["enabled"] = True   # echter Modus: UA wird validiert
     calls = []
 
     def fetcher(url):
@@ -78,10 +79,16 @@ def test_config_ua_eingetragen():
     """
     import yaml
     raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
-    for ua in (raw["smart_money"].get("user_agent"), raw["sec"].get("user_agent")):
-        assert ua and "@" in ua and "example" not in ua.lower() and "test" not in ua.lower()
-    assert raw["smart_money"]["user_agent"] == "Thomas Homburg t09homburg@gmail.com"
-    assert raw["sec"]["user_agent"] == "Thomas Homburg t09homburg@gmail.com"
+    # user hat die Datei uebernommen: sec.user_agent ist die Quelle
+    # (smart_money.user_agent optional; Fallback auf sec.user_agent in user_agent_from_cfg)
+    ua_sec = raw["sec"].get("user_agent")
+    assert ua_sec and "@" in ua_sec and "example" not in ua_sec.lower() and "test" not in ua_sec.lower()
+    assert ua_sec == "Tom Homburg t09homburg@gmail.com"
+    # Fallback-Verhalten: ohne smart_money.user_agent greift sec.user_agent
+    cfg = load_config()
+    cfg2 = dict(cfg)
+    cfg2["smart_money"] = {k: v for k, v in cfg["smart_money"].items() if k != "user_agent"}
+    assert smart_money.user_agent_from_cfg(cfg2) == "Tom Homburg t09homburg@gmail.com"
 
 
 # --------------------------------------------------------------------------
@@ -226,4 +233,4 @@ def test_baupost_cik_in_config():
     raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
     baupost = next(f for f in raw["smart_money"]["funds"] if "Baupost" in f["name"])
     assert baupost["cik"] == "0001061768"
-    assert baupost["name"] == "Baupost Group LLC/MA"
+    assert baupost["name"] == "Baupost Group"  # uebernommene Datei

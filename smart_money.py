@@ -105,9 +105,17 @@ def validate_user_agent(ua: str) -> str:
 
 
 def user_agent_from_cfg(cfg: dict) -> str:
-    """v44 (1): smart_money.user_agent, Fallback sec.user_agent; validiert."""
+    """v44 (1): smart_money.user_agent, Fallback sec.user_agent; validiert.
+
+    Tests/CI ohne echten Kontakt: sec-Block nur mit {enabled: False} (kein
+    user_agent) -> Rueckgabe "" (nicht validiert); fetch_all bricht dann vor
+    dem ersten echten Request ab, Fetcher-Fixtures laufen trotzdem.
+    """
     sm = cfg.get("smart_money", {})
-    ua = str(sm.get("user_agent") or cfg.get("sec", {}).get("user_agent") or "").strip()
+    sec = cfg.get("sec", {})
+    ua = str(sm.get("user_agent") or "").strip() or str(sec.get("user_agent") or "").strip()
+    if not ua and sec.get("enabled") is False:
+        return ""  # Test-Modus: kein echter Kontakt konfiguriert
     return validate_user_agent(ua)
 
 
@@ -123,7 +131,8 @@ class SecHttp:
     def __init__(self, user_agent: str, max_rps: float = 5.0,
                  retry_waits=(2.0, 5.0, 10.0), retry_tries: int = 3,
                  fetcher=None, errors: list | None = None, sleeper=time.sleep):
-        self.user_agent = validate_user_agent(user_agent)
+        # Leerer UA nur zulaessig, wenn ein Fixture-Fetcher injiziert ist (Tests)
+        self.user_agent = validate_user_agent(user_agent) if (user_agent or fetcher is None) else ""
         self.max_rps = max(0.1, float(max_rps))
         self.retry_waits = [float(w) for w in retry_waits]
         self.retry_tries = max(1, int(retry_tries))
@@ -606,13 +615,14 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
     """
     sm = cfg.get("smart_money", {})
     nq = int(quarters if quarters is not None else sm.get("quarters", 8))
-    r = sm.get("retry_403_429", {})
+    r = sm.get("retry_403_429", sm.get("retry_429", {}))
+    _waits = r.get("wartezeiten_s") or ([r["warte_s"]] * int(r.get("versuche", 3)) if "warte_s" in r else None)
     errors: list[dict] = []
     # v44 (1): User-Agent aus smart_money.user_agent (Fallback sec.user_agent),
     # validiert -- bei ungueltigem Wert Abbruch VOR dem ersten Request
     http = SecHttp(user_agent_from_cfg(cfg),
                    float(sm.get("max_requests_per_second", 5.0)),
-                   tuple(r.get("wartezeiten_s", [2, 5, 10])), int(r.get("versuche", 3)),
+                   tuple(_waits or [2, 5, 10]), int(r.get("versuche", 3)),
                    fetcher=fetcher, errors=errors)
     con = connect(db_path)
     ciks = resolve_all_ciks(cfg, http)
