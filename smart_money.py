@@ -120,9 +120,9 @@ def user_agent_from_cfg(cfg: dict) -> str:
 
 
 class SecHttp:
-    """urllib-HTTP mit validiertem User-Agent, Rate-Limit und 403/429-Retry.
+    """urllib-HTTP mit validiertem User-Agent, Rate-Limit und 403/429/503-Retry.
 
-    fetcher: optionale Funktion url -> bytes (Tests ohne Netz). Echte 403/429
+    fetcher: optionale Funktion url -> bytes (Tests ohne Netz). Echte 403/429/503
     (urllib HTTPError) -> bis zu `retry_tries` Wiederholungen mit den
     Wartezeiten `retry_waits` (Default 2, 5, 10 s); danach Fehlerlog mit URL
     und Header-Hinweis ('User-Agent pruefen').
@@ -143,7 +143,8 @@ class SecHttp:
 
     def get(self, url: str, timeout: int = 30) -> bytes:
         """v45 (2): laeuft ueber die zentrale sec_get() (Header User-Agent +
-        Accept-Encoding gzip + Host bei jedem Request). 403/429 -> Retries."""
+        Accept-Encoding gzip + Host bei jedem Request). 403/429/503 -> Retries
+        (503 = SEC rate-limit/Edge-Block, wird wie 403/429 wiederholt)."""
         gap = 1.0 / self.max_rps
         for attempt in range(1, self.retry_tries + 1):
             wait = self._last + gap - time.monotonic()
@@ -154,7 +155,7 @@ class SecHttp:
                                           fetcher=self._fetcher, sleeper=self._sleep)
             if status == 200:
                 return body
-            if status in (403, 429):
+            if status in (403, 429, 503):  # v45: 503 (SEC Edge) ebenfalls retry
                 if attempt < self.retry_tries:
                     w = self.retry_waits[min(attempt - 1, len(self.retry_waits) - 1)]
                     logger.warning("SEC HTTP %d fuer %s -- Retry %d/%d in %.0fs (User-Agent: %r)",

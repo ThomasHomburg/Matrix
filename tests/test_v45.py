@@ -111,6 +111,31 @@ def test_403_wiederholung_und_fehlerlog_mit_url_status_antwort(monkeypatch):
     assert "User-Agent pruefen" in e["error"]
 
 
+def test_503_wird_ebenfalls_wiederholt(monkeypatch):
+    """v45 Nachtrag: 503 (SEC Edge/rate-limit) -> gleiche Retry-Logik wie 403/429."""
+    waits, errors = [], []
+    http = smart_money.SecHttp(VALID_UA, max_rps=100000,
+                               retry_waits=(2.0, 5.0, 10.0), retry_tries=3,
+                               errors=errors, sleeper=waits.append)
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout=30):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(req.full_url, 503, "Service Unavailable",
+                                     {"Content-Type": "text/html"},
+                                     BytesIO(b"<html>Request blocked (edge)</html>"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        http.get("https://www.sec.gov/Archives/edgar/data/1061768/")
+    assert exc.value.code == 503
+    assert calls["n"] == 3
+    assert waits == [2.0, 5.0]
+    assert errors[0]["http_code"] == 503
+    assert "Archives/edgar/data/1061768" in errors[0]["url"]
+    assert "Request blocked" in errors[0]["antwort_beginn"]
+
+
 # --------------------------------------------------------------------------
 # (4) submissions -> accession -> archives -> infotable (Fixture)
 # --------------------------------------------------------------------------
