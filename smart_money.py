@@ -146,6 +146,7 @@ class SecHttp:
         Accept-Encoding gzip + Host bei jedem Request). 403/429/503 -> Retries
         (503 = SEC rate-limit/Edge-Block, wird wie 403/429 wiederholt)."""
         gap = 1.0 / self.max_rps
+        last_exc = None
         for attempt in range(1, self.retry_tries + 1):
             wait = self._last + gap - time.monotonic()
             if wait > 0:
