@@ -133,7 +133,7 @@ def test_http_429_retries_und_fehlerlog(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(urllib.error.HTTPError):
-        http.get("https://www.sec.gov/cgi-bin/browse-edgar?x=1")
+        http.get("https://www.sec.gov/Archives/edgar/data/1067983/")
     assert calls["n"] == 3 and waits == [2.0, 5.0]
     assert errors[0]["http_code"] == 429 and "User-Agent pruefen" in errors[0]["error"]
 
@@ -162,36 +162,20 @@ def _submissions(cik10: str, forms, dates, name="X"):
                        "filings": {"recent": {"form": forms, "filingDate": dates}}}).encode()
 
 
-def _company_atom(hits) -> bytes:
-    items = "".join(
-        f'<entry><title>{t}</title><updated>2025-01-01T00:00:00Z</updated>'
-        f'<link href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK={c}"/></entry>'
-        for c, t in hits)
-    return f'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">{items}</feed>'.encode()
-
-
-def test_mehrere_treffer_liste_kein_autopick():
-    """Firmensuche mit 2 Kandidaten -> beide in der Trefferliste, cik bleibt leer."""
+def test_leere_cik_hinweis_kein_netzabruf():
+    """v45 (3): cik leer -> Hinweis 'bitte in config.yaml eintragen', KEIN
+    Netzabruf (kein cgi-bin/efts mehr)."""
     def fetcher(url: str) -> bytes:
-        if "action=getcompany&company=" in url:
-            return _company_atom([("0009999999", "STARBOARD VALUE LP"),
-                                  ("0008888888", "STARBOARD VALUE &amp; OPP FUND")])
-        if "submissions/CIK0009999999" in url:
-            return _submissions("0009999999", ["13F-HR", "10-K"], ["2025-08-15", "2025-04-01"],
-                                "STARBOARD VALUE LP")
-        if "submissions/CIK0008888888" in url:
-            return _submissions("0008888888", ["13F-HR"], ["2025-05-15"], "STARBOARD VALUE & OPP FUND")
-        raise ValueError(url)
+        raise AssertionError(f"kein Netzabruf erwartet, aber: {url}")
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher)
-    cfg = _cfg(name_variants={"Starboard Value": ["Starboard Value"]})
+    cfg = _cfg()
     cfg["smart_money"]["funds"] = [{"name": "Starboard Value", "cik": "", "typ": "aktivist",
                                     "gewicht": 0.0, "positions_soll_max": 30}]
     out = smart_money.resolve_all_ciks(cfg, http)
     e = out[0]
-    assert e["cik"] == ""                              # nichts automatisch uebernommen
-    assert e["filer_status"] == "manuell eintragen"
-    assert {t["cik"] for t in e["treffer"]} == {"0009999999", "0008888888"}
-    assert all(t["last_13f_hr"] for t in e["treffer"])
+    assert e["cik"] == ""
+    assert "config.yaml eintragen" in e["filer_status"]
+    assert e["treffer"] is None
 
 
 def test_cik_ohne_13f_hr_ist_kein_filer():

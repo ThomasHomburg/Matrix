@@ -65,24 +65,6 @@ def _infotable(holdings, options=()) -> bytes:
     return f'<?xml version="1.0"?><informationTable>{rows}{opts}</informationTable>'.encode()
 
 
-def _atom(entries) -> bytes:
-    items = []
-    for e in entries:
-        if len(e) == 7:
-            acc, d, form, rep, t, cik_n, href = e
-        else:
-            acc, d, form, rep, t, cik_n = e
-            href = f"https://www.sec.gov/Archives/edgar/data/{cik_n}/{acc}/"
-        items.append(
-            f'<entry><title>{t}</title><updated>{d}T00:00:00Z</updated>'
-            f'<category term="{form} {rep}"/>'
-            f'<link href="{href}"/></entry>')
-    return ('<?xml version="1.0"?>'
-            f'<feed xmlns="http://www.w3.org/2005/Atom">{"".join(items)}</feed>').encode()
-
-
-# Fixture-Holdings je Fonds/Quartal. Q2 von Berkshire hat zusaetzlich eine
-# 13F-HR/A-Nachmeldung (hoeheres filing_date, AAA 1800 statt 1500).
 HOLD = {
     "1067983": {  # Berkshire
         0: [("111111111", "AAA Corp", 1000.0, 100.0), ("38259P508", "Alphabet", 100.0, 200.0),
@@ -110,12 +92,9 @@ OPTIONS = {"1067983": (1, [("111111111", "AAA Corp", "CALL", 100.0, 10.0)])}  # 
 
 def _make_fetcher():
     def fetcher(url: str) -> bytes:
-        if "efts.sec.gov" in url:
-            # v43-alt; v44 nutzt browse-edgar getcompany -- hier leer
-            return json.dumps({"hits": {"hits": []}}).encode()
         if "submissions/CIK" in url:
             # v45: submissions liefert Validierung (form) UND Filing-Liste
-            # (accessionNumber + reportDate) -- ohne cgi-bin
+            # (accessionNumber + reportDate) -- ohne cgi-bin/efts
             cik10 = url.split("submissions/CIK")[1].split(".")[0]
             names = {"0001067983": "BERKSHIRE HATHAWAY INC",
                      "0001336528": "PERSHING SQUARE CAPITAL MANAGEMENT LLC",
@@ -126,11 +105,15 @@ def _make_fetcher():
                 forms = ["13F-HR", "13F-HR", "10-K"]
                 dates = ["2025-05-15", "2025-08-15", "2025-04-01"]
                 reports = ["2025-03-31", "2025-06-30", "2025-12-31"]
-                accs = [f"{cik10}00000000{i}" for i in range(3)]
+                accs = [f"{cik10}-25-00000{i}" for i in range(3)]
                 if cik10 == "0001067983":
                     # 13F-HR/A-Nachmeldung fuer Q2 (filing 2025-08-20 > 2025-08-15)
                     forms.append("13F-HR/A"); dates.append("2025-08-20")
-                    reports.append("2025-06-30"); accs.append(f"{cik10}000000001")
+                    reports.append("2025-06-30"); accs.append(f"{cik10}-25-000001")
+                if cik10 == "0009999999":
+                    # 13D-Katalysator (SC 13D) kommt jetzt auch aus submissions
+                    forms.append("SC 13D"); dates.append("2025-07-01")
+                    reports.append("2025-07-01"); accs.append("0009999999-25-000001")
                 return json.dumps({"name": names[cik10],
                                    "filings": {"recent": {"form": forms, "filingDate": dates,
                                                           "reportDate": reports,
@@ -138,24 +121,7 @@ def _make_fetcher():
             return json.dumps({"name": "NO FILER INC",
                                "filings": {"recent": {"form": ["10-K"], "filingDate": ["2025-04-01"],
                                                       "reportDate": ["2025-12-31"],
-                                                      "accessionNumber": ["0000000000000000"]}}}).encode()
-        if "action=getcompany&company=" in url:
-            # v44 Firmensuche: Starboard -> zwei Kandidaten (kein Auto-Pick)
-            import urllib.parse as _up
-            q = _up.parse_qs(_up.urlparse(url).query)["company"][0]
-            if "starboard" in q.lower():
-                return _atom([
-                    ("x", "2025-07-01", "", "", "STARBOARD VALUE LP",
-                     9999999, "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0009999999"),
-                    ("x", "2025-06-01", "", "", "STARBOARD VALUE &amp; OPPORTUNITY FUND",
-                     8888888, "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0008888888"),
-                ])
-            return _atom([])
-        if "browse-edgar" in url and "type=SC+13D" in url:
-            return _atom([("999999900000000001", "2025-07-01", "SC 13D", "2025-07-01", "SC 13D", 9999999)])
-        if "browse-edgar" in url and "type=13F" in url and "type=SC+13D" not in url:
-            # v45: 13F-Liste kommt aus submissions, nicht mehr cgi-bin -- leer
-            return _atom([])
+                                                      "accessionNumber": ["0000000000-00-000000"]}}}).encode()
         if url.endswith("index.json"):
             return json.dumps({"directory": {"item": [
                 {"name": "infotable.xml"}, {"name": "primary_doc.xml"}]}}).encode()
@@ -165,9 +131,9 @@ def _make_fetcher():
             return f'<?xml version="1.0"?><doc><periodOfReport>{rd}</periodOfReport></doc>'.encode()
         if url.endswith("infotable.xml"):
             cik_n = url.split("/")[-3]
-            acc = url.split("/")[-2]
-            if cik_n == "1067983" and acc.endswith("000000001") and len(acc) > 18:
-                # A-Fassung (extra accession, laenger) -> Q2 mit 1800 shares
+            acc = url.split("/")[-2]          # accession OHNE Bindestriche
+            if cik_n == "1067983" and acc.endswith("25000001"):
+                # A-Fassung (accession ...-25-000001) -> Q2 mit 1800 shares
                 return _infotable(HOLD["1067983_A"][1], options=OPTIONS["1067983"][1])
             idx = int(acc[-1])
             if idx > 1:

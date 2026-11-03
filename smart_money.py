@@ -15,7 +15,7 @@ Aufruf:
 
 (1) Fonds-Liste: config smart_money.funds (name, cik, typ, gewicht,
     positions_soll_max). CIKs mit leerem Feld werden per EDGAR-Firmensuche
-    (efts.sec.gov full-text search / company search) aufgeloest -- nie raten.
+    CIKs ausschliesslich aus config.yaml (leer -> Hinweis, kein Netzabruf).
     Fehlt ein Fonds als 13F-HR-Filer -> im Bericht nennen und ueberspringen.
 
 (2) Abruf: letzte N Quartale 13F-HR je Fonds (config quarters, Default 8);
@@ -165,6 +165,7 @@ class SecHttp:
                 self.errors.append({
                     "url": url, "http_code": status,
                     "antwort_beginn": body[:200].decode("utf-8", "replace"),
+                    "retry_after": _hdrs.get("Retry-After", ""),
                     "error": (f"HTTP {status} nach {self.retry_tries} Versuchen -- "
                               f"User-Agent pruefen (gesendet: {self.user_agent!r}); "
                               f"Antwortbeginn: {body[:120].decode('utf-8', 'replace')!r}")})
@@ -252,60 +253,14 @@ def _validate_cik_13f(cik: str, http: SecHttp) -> dict | None:
             "last_13f_hr": last13f, "n_13f": n}
 
 
-def search_company_13f(name: str, http: SecHttp) -> list[dict]:
-    """v44 (2): EDGAR-Firmensuche -- cgi-bin/browse-edgar?action=getcompany&
-    company=<Name>&type=13F-HR&output=atom. Rueckgabe: Trefferliste
-    [{cik, name, last_13f_hr}] (validiert via submissions; nur 13F-HR-Filer).
-    Mehrere Kandidaten -> volle Liste, KEIN Auto-Pick."""
-    import urllib.parse
-    q = urllib.parse.quote(name)
-    url = (f"{_sec_base()}/cgi-bin/browse-edgar?action=getcompany&company={q}"
-           f"&type=13F-HR&dateb=&owner=include&count=40&output=atom")
-    try:
-        raw = http.get(url)
-        root = ET.fromstring(raw)
-    except Exception as exc:
-        logger.warning("Firmensuche '%s' fehlgeschlagen: %s", name, exc)
-        return []
-    hits = []
-    seen = set()
-    ns = {"a": "http://www.w3.org/2005/Atom"}
-    for e in root.findall("a:entry", ns):
-        link = e.find("a:link", ns)
-        title = e.find("a:title", ns)
-        if link is None:
-            continue
-        href = link.get("href", "")
-        m = None
-        import re as _re
-        m = _re.search(r"CIK=([^&]+)", href)
-        if not m:
-            # Alternativ: CIK im Pfad /Archives/edgar/data/<cik>/
-            m2 = _re.search(r"/data/(\d+)/", href)
-            m = m2
-        if not m:
-            continue
-        cik = str(int(m.group(1))).zfill(10)
-        if cik in seen:
-            continue
-        seen.add(cik)
-        name_e = title.text if title is not None else ""
-        v = _validate_cik_13f(cik, http)
-        if v:  # nur Filer mit 13F-HR
-            hits.append({"cik": cik, "name": v["name"] or name_e,
-                         "last_13f_hr": v["last_13f_hr"]})
-    return hits
-
-
 def resolve_all_ciks(cfg: dict, http: SecHttp) -> list[dict]:
-    """v44 (2): CIK-Aufloesung je Fonds, Reihenfolge:
-    (a) cik aus config.yaml (validiert: mindestens ein 13F-HR in submissions),
-    (b) EDGAR-Firmensuche mit Namensvarianten (config smart_money.name_variants)
-        -> Trefferliste ins Report, NICHTS automatisch uebernehmen,
-    (c) sonst 'manuell eintragen'.
-    Rueckgabe: [{name, cik, filer_status, treffer: [...]|None}]."""
+    """v45 (3): CIK-Aufloesung NUR aus config.yaml -- kein Netzabruf
+    (kein cgi-bin browse-edgar, kein efts full-text search).
+    cik leer -> Hinweis "bitte in config.yaml eintragen (sec.gov/edgar/search)".
+    cik gesetzt -> validiert via data.sec.gov/submissions/CIK##########.json
+    (mindestens ein 13F-HR; sonst "kein Filer").
+    Rueckgabe: [{name, cik, filer_status, treffer: None}]."""
     sm = cfg.get("smart_money", {})
-    variants = sm.get("name_variants", {}) or {}
     out = []
     for f in sm.get("funds", []):
         name = f.get("name", "")
@@ -319,24 +274,10 @@ def resolve_all_ciks(cfg: dict, http: SecHttp) -> list[dict]:
             else:
                 out.append({"name": name, "cik": cik.zfill(10), "filer_status": "kein Filer",
                             "bericht_name": "", "last_13f_hr": "", "treffer": None})
-            continue
-        # (b) Namensvarianten suchen
-        treffer: list[dict] = []
-        seen = set()
-        names = variants.get(name, [name])
-        if isinstance(names, str):
-            names = [names]
-        for nv in names:
-            for h in search_company_13f(nv, http):
-                if h["cik"] not in seen:
-                    seen.add(h["cik"])
-                    treffer.append(h)
-        if treffer:
-            out.append({"name": name, "cik": "", "filer_status": "manuell eintragen",
-                        "bericht_name": "", "last_13f_hr": "", "treffer": treffer})
         else:
-            out.append({"name": name, "cik": "", "filer_status": "manuell eintragen",
-                        "bericht_name": "", "last_13f_hr": "", "treffer": []})
+            out.append({"name": name, "cik": "",
+                        "filer_status": "bitte in config.yaml eintragen (sec.gov/edgar/search)",
+                        "bericht_name": "", "last_13f_hr": "", "treffer": None})
     return out
 
 
@@ -447,39 +388,6 @@ def _parse_infotable(xml_bytes: bytes) -> tuple[list[dict], list[dict]]:
     return holdings, options
 
 
-def _atom_entries(xml_bytes: bytes) -> list[dict]:
-    """Atom-Feed (browse-edgar) -> [{accession, filing_date, form, report_date}]."""
-    root = ET.fromstring(xml_bytes)
-    ns = {"a": "http://www.w3.org/2005/Atom"}
-    out = []
-    for e in root.findall("a:entry", ns):
-        title = e.find("a:title", ns)
-        updated = e.find("a:updated", ns)
-        link = e.find("a:link", ns)
-        accession = ""
-        if link is not None:
-            href = link.get("href", "")
-            accession = href.rstrip("/").split("/")[-1] if href else ""
-        # category term enthaelt form + period (z. B. "13F-HR 2025-06-30")
-        form, report_date = "", ""
-        cat = e.find("a:category", ns)
-        if cat is not None:
-            term = cat.get("term", "")
-            # term wie "13F-HR 2025-06-30" oder "SC 13D 2025-07-01":
-            # form = alle Tokens bis auf das letzte (Datum), datum = letztes Token
-            parts = term.split()
-            if len(parts) >= 2 and parts[-1][:4].isdigit():
-                form = " ".join(parts[:-1])
-                report_date = parts[-1][:10]
-            elif parts:
-                form = " ".join(parts)
-        out.append({"accession": accession,
-                    "filing_date": (updated.text or "")[:10] if updated is not None else "",
-                    "form": form or (title.text if title is not None else ""),
-                    "report_date": report_date})
-    return out
-
-
 def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dict]:
     """v45 (4): letzte 13F-HR (+13F-HR/A) eines CIK -- OHNE cgi-bin:
     submissions-JSON (data.sec.gov/submissions/CIK##########.json) ->
@@ -489,11 +397,22 @@ def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dic
     cik10 = str(cik).zfill(10)
     url = f"https://data.sec.gov/submissions/CIK{cik10}.json"
     data = json.loads(http.get(url).decode("utf-8"))
-    rec = data.get("filings", {}).get("recent", {})
-    accessions = rec.get("accessionNumber", [])
-    forms = rec.get("form", [])
-    dates = rec.get("filingDate", [])
-    reports = rec.get("reportDate", [])
+    filings = data.get("filings", {})
+    rec = filings.get("recent", {})
+    accessions = list(rec.get("accessionNumber", []))
+    forms = list(rec.get("form", []))
+    dates = list(rec.get("filingDate", []))
+    reports = list(rec.get("reportDate", []))
+    # bei Bedarf zusaetzliche Dateien laden (filings.files: [{name, ...}])
+    for extra in filings.get("files", []) or []:
+        ename = extra.get("name", "")
+        if not ename.endswith(".json"):
+            continue
+        ex = json.loads(http.get(f"https://data.sec.gov/submissions/{ename}").decode("utf-8"))
+        accessions += ex.get("accessionNumber", [])
+        forms += ex.get("form", [])
+        dates += ex.get("filingDate", [])
+        reports += ex.get("reportDate", [])
     hr = [{"accession": a, "filing_date": d, "form": f, "report_date": r}
           for a, f, d, r in zip(accessions, forms, dates, reports)
           if str(f).startswith("13F-HR")]
@@ -507,12 +426,17 @@ def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dic
 
 
 def list_13d_filings(cik: str, http: SecHttp, max_filings: int = 20) -> list[dict]:
-    """13D/13D-A eines (aktivistischen) Filers: [{accession, filing_date, form, report_date}]."""
-    cik_n = str(int(str(cik).lstrip("0") or "0"))
-    url = (f"{_sec_base()}/cgi-bin/browse-edgar?action=getcompany&CIK={cik_n}"
-           f"&type=SC+13D&dateb=&owner=include&count={max_filings}&output=atom")
-    entries = _atom_entries(http.get(url))
-    return [e for e in entries if e["form"] in ("SC 13D", "SC 13D/A", "13D", "13D-A")][:max_filings]
+    """v45 (1): 13D/13D-A eines (aktivistischen) Filers -- OHNE cgi-bin,
+    ueber submissions-JSON (form enthaelt '13D')."""
+    cik10 = str(cik).zfill(10)
+    url = f"https://data.sec.gov/submissions/CIK{cik10}.json"
+    data = json.loads(http.get(url).decode("utf-8"))
+    rec = data.get("filings", {}).get("recent", {})
+    out = [{"accession": a, "filing_date": d, "form": f, "report_date": r}
+           for a, f, d, r in zip(rec.get("accessionNumber", []), rec.get("form", []),
+                                 rec.get("filingDate", []), rec.get("reportDate", []))
+           if "13D" in str(f)]
+    return out[:max_filings]
 
 
 def load_13f_quarter(cik: str, accession: str, http: SecHttp,
@@ -524,10 +448,15 @@ def load_13f_quarter(cik: str, accession: str, http: SecHttp,
     acc = accession.replace("-", "")
     cik_n = str(int(str(cik).lstrip("0") or "0"))
     base = f"{_sec_base()}/Archives/edgar/data/{cik_n}/{acc}"
-    idx = json.loads(http.get(f"{base}/index.json").decode("utf-8"))
-    items = idx.get("directory", {}).get("item", [])
-    infotable = next((i["name"] for i in items if i.get("name", "").lower() == "infotable.xml"),
-                     "infotable.xml")
+    try:
+        idx = json.loads(http.get(f"{base}/index.json").decode("utf-8"))
+        items = idx.get("directory", {}).get("item", [])
+        infotable = next((i["name"] for i in items if i.get("name", "").lower() == "infotable.xml"),
+                         "infotable.xml")
+    except Exception:
+        # Fallback: bisheriger Pfad (infotable.xml direkt im Verzeichnis)
+        items = []
+        infotable = "infotable.xml"
     if not report_date:
         for item in items:
             n = item.get("name", "")
@@ -965,7 +894,6 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
 DIAG_URLS = [
     "https://data.sec.gov/submissions/CIK0001067983.json",
     "https://www.sec.gov/Archives/edgar/data/1067983/",
-    "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=1067983&type=13F-HR&dateb=&owner=include&count=5&output=atom",
 ]
 
 

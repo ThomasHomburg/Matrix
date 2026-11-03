@@ -233,6 +233,104 @@ def test_config_example_user_agent_abbruch(tmp_path, monkeypatch):
 # (1) diagnose (mit Fixture-Fetcher ueber sec_get)
 # --------------------------------------------------------------------------
 
+def test_submissions_mit_3_filings_richtige_accessions():
+    """(1) submissions-JSON mit 3 Filings (13F-HR, 13F-HR/A, 10-K) -> nur 13F-HR,
+    neueste filing_date je report_date gewinnt, richtige Accession."""
+    def fetcher(url: str) -> bytes:
+        assert "submissions/CIK0001067983" in url
+        return json.dumps({
+            "name": "BERKSHIRE HATHAWAY INC",
+            "filings": {"recent": {
+                "accessionNumber": ["0001067983-25-000010", "0001067983-25-000011",
+                                    "0001067983-25-000012", "0001067983-25-000013"],
+                "form": ["13F-HR", "13F-HR", "10-K", "13F-HR/A"],
+                "filingDate": ["2025-05-15", "2025-08-14", "2025-04-01", "2025-08-20"],
+                "reportDate": ["2025-03-31", "2025-06-30", "2025-12-31", "2025-06-30"],
+            }}}).encode()
+    http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher)
+    filings = smart_money.list_13f_filings("0001067983", http)
+    assert [f["report_date"] for f in filings] == ["2025-03-31", "2025-06-30"]
+    assert filings[0]["accession"] == "0001067983-25-000010"
+    # 13F-HR/A (2025-08-20) ersetzt Original (2025-08-14) zum selben report_date
+    assert filings[1]["accession"] == "0001067983-25-000013"
+    assert filings[1]["form"] == "13F-HR/A"
+
+
+def test_submissions_filials_files_fallback():
+    """(1) filings.files: zusaetzliche JSON-Datei wird nachgeladen."""
+    seen = []
+
+    def fetcher(url: str) -> bytes:
+        seen.append(url)
+        if url.endswith("CIK0001067983.json"):
+            return json.dumps({"filings": {
+                "recent": {"accessionNumber": ["0001067983-25-000001"], "form": ["13F-HR"],
+                           "filingDate": ["2025-05-15"], "reportDate": ["2025-03-31"]},
+                "files": [{"name": "CIK0001067983_2024.json"}],
+            }}).encode()
+        if "CIK0001067983_2024.json" in url:
+            return json.dumps({"accessionNumber": ["0001067983-24-000009"], "form": ["13F-HR"],
+                                "filingDate": ["2024-05-15"], "reportDate": ["2024-03-31"]}).encode()
+        raise ValueError(url)
+    http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher)
+    filings = smart_money.list_13f_filings("0001067983", http)
+    assert any("CIK0001067983_2024.json" in u for u in seen)
+    assert {f["report_date"] for f in filings} == {"2025-03-31", "2024-03-31"}
+
+
+def test_index_json_fallback_auf_direkten_pfad():
+    """(2) index.json schlaegt fehl -> Fallback: infotable.xml direkt laden."""
+    seen = []
+
+    def fetcher(url: str) -> bytes:
+        seen.append(url)
+        if url.endswith("index.json"):
+            raise ValueError("404")
+        if url.endswith("infotable.xml"):
+            return b'<?xml version="1.0"?><informationTable><infoTable><cusip>111111111</cusip>' \
+                   b'<nameOfIssuer>AAA</nameOfIssuer><shrsOrPrnAmt>10 sh</shrsOrPrnAmt>' \
+                   b'<value>1.0</value></infoTable></informationTable>'
+        raise ValueError(url)
+    http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher)
+    rd, holdings, options = smart_money.load_13f_quarter("0001067983", "0001067983-25-000001",
+                                                         http, report_date="2025-03-31")
+    assert rd == "2025-03-31"
+    assert holdings and holdings[0]["cusip"] == "111111111"
+    assert any(u.endswith("/000106798325000001/infotable.xml") for u in seen)
+
+
+def test_fehlerlog_enthaelt_retry_after(monkeypatch):
+    """(4) 429 mit Retry-After-Header -> Fehlerlog enthaelt retry_after."""
+    errors = []
+    http = smart_money.SecHttp(VALID_UA, max_rps=100000,
+                               retry_waits=(2.0, 5.0, 10.0), retry_tries=3,
+                               errors=errors, sleeper=lambda s: None)
+
+    def fake_urlopen(req, timeout=30):
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests",
+                                     {"Retry-After": "30", "Content-Type": "text/html"},
+                                     BytesIO(b"<html>Rate limited</html>"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(urllib.error.HTTPError):
+        http.get("https://data.sec.gov/submissions/CIK0001067983.json")
+    assert errors[0]["http_code"] == 429
+    assert errors[0]["retry_after"] == "30"
+    assert errors[0]["url"].endswith("CIK0001067983.json")
+    assert "Rate limited" in errors[0]["antwort_beginn"]
+
+
+def test_cik_leer_kein_netz_hinweis_config():
+    """(3) resolve_all_ciks: cik leer -> Hinweis, fetcher darf nie aufgerufen werden."""
+    def fetcher(url: str) -> bytes:
+        raise AssertionError(f"kein Netzabruf: {url}")
+    http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher)
+    cfg = {"smart_money": {"funds": [{"name": "X", "cik": "", "typ": "aktivist",
+                                      "gewicht": 0.0, "positions_soll_max": 5}]}}
+    out = smart_money.resolve_all_ciks(cfg, http)
+    assert "config.yaml eintragen" in out[0]["filer_status"]
+
+
 def test_diagnose_ausgabe(monkeypatch, capsys):
     import argparse
     calls = []
@@ -254,9 +352,9 @@ def test_diagnose_ausgabe(monkeypatch, capsys):
     assert "Config-Pfad (absolut):" in out
     assert str(Path.cwd().resolve()) in out or "config.yaml" in out
     assert f"User-Agent (gesendet): {VALID_UA!r}" in out
-    assert out.count("[200]") == 3  # drei Test-URLs
-    assert len(calls) == 3
+    assert out.count("[200]") == 2  # zwei Test-URLs (kein cgi-bin mehr)
+    assert len(calls) == 2
     for u in ("data.sec.gov/submissions/CIK0001067983.json",
-              "www.sec.gov/Archives/edgar/data/1067983/",
-              "cgi-bin/browse-edgar"):
+              "www.sec.gov/Archives/edgar/data/1067983/"):
         assert any(u in c for c in calls)
+    assert not any("cgi-bin" in c for c in calls)
