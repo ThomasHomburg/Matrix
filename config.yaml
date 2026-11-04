@@ -407,11 +407,11 @@ smart_money:
     - {name: "Himalaya Capital Management",       cik: "0001709323", typ: qualitaet,   gewicht: 1.0, positions_soll_max: 30}
     - {name: "Pershing Square Capital Management", cik: "0001336528", typ: konzentriert, gewicht: 1.0, positions_soll_max: 20}
     - {name: "Duquesne Family Office",            cik: "0001536411", typ: konzern,      gewicht: 0.5, positions_soll_max: 40}
-    - {name: "Akre Capital Management",           cik: "",           typ: qualitaet,   gewicht: 1.0, positions_soll_max: 40}
-    - {name: "Dalal Street LLC (Pabrai)",         cik: "",           typ: deep_value,  gewicht: 1.0, positions_soll_max: 20}
-    - {name: "Harris Associates",                 cik: "",           typ: qualitaet,   gewicht: 0.5, positions_soll_max: 100}
-    - {name: "Starboard Value",                   cik: "",           typ: aktivist,    gewicht: 0.0, positions_soll_max: 30}
-    - {name: "Elliott Investment Management",     cik: "",           typ: aktivist,    gewicht: 0.0, positions_soll_max: 30}
+    - {name: "Akre Capital Management",           cik: "0001112520", typ: qualitaet,   gewicht: 1.0, positions_soll_max: 40}
+    - {name: "Dalal Street LLC (Pabrai)",         cik: "0001549575", typ: deep_value,  gewicht: 1.0, positions_soll_max: 20}
+    - {name: "Harris Associates",                 cik: "0000813917", typ: qualitaet,   gewicht: 0.5, positions_soll_max: 100}
+    - {name: "Starboard Value",                   cik: "0001517137", typ: aktivist,    gewicht: 0.0, positions_soll_max: 30}
+    - {name: "Elliott Investment Management",     cik: "0001791786", typ: aktivist,    gewicht: 0.0, positions_soll_max: 30}
   max_requests_per_second: 5      # SEC-Policy (wie sec.max_requests_per_second)
   retry_429: {warte_s: 5, versuche: 3}   # Wiederholung bei HTTP 429
   quarters: 8                     # letzte 8 Quartale 13F-HR je Fonds
