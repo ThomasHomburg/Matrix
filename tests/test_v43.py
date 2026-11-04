@@ -114,19 +114,41 @@ def _make_fetcher():
             # v43-alt; v44 nutzt browse-edgar getcompany -- hier leer
             return json.dumps({"hits": {"hits": []}}).encode()
         if "submissions/CIK" in url:
-            # submissions-Validierung: CIKs mit/ohne 13F-HR
+            # v45: submissions/CIK##########.json ist primaere Filing-Liste
+            # (filings.recent: accessionNumber, form, filingDate, reportDate)
             cik10 = url.split("submissions/CIK")[1].split(".")[0]
-            if cik10 in ("0001067983", "0001336528", "0001536411", "0009999999", "0008888888"):
-                forms = ["13F-HR", "13F-HR", "10-K"] * 3
-                dates = ["2025-08-15", "2025-05-15", "2025-04-01"] * 3
-                return json.dumps({"name": {"0001067983": "BERKSHIRE HATHAWAY INC",
-                                            "0001336528": "PERSHING SQUARE CAPITAL MANAGEMENT LLC",
-                                            "0001536411": "DUQUESNE FAMILY OFFICE LLC",
-                                            "0009999999": "STARBOARD VALUE LP",
-                                            "0008888888": "STARBOARD VALUE & OPPORTUNITY FUND LTD"}[cik10],
-                                   "filings": {"recent": {"form": forms, "filingDate": dates}}}).encode()
+            names = {"0001067983": "BERKSHIRE HATHAWAY INC",
+                     "0001336528": "PERSHING SQUARE CAPITAL MANAGEMENT LLC",
+                     "0001536411": "DUQUESNE FAMILY OFFICE LLC",
+                     "0009999999": "STARBOARD VALUE LP",
+                     "0008888888": "STARBOARD VALUE & OPPORTUNITY FUND LTD"}
+            if cik10 in names:
+                cik_n = cik10.lstrip("0")
+                entries = []  # (accession, filingDate, form, reportDate) -- wie im Atom-Block unten
+                if cik_n in HOLD:
+                    for idx in sorted(HOLD[cik_n]):
+                        entries.append((f"{cik_n}000000000{idx}", f"2025-0{5 + idx}-15",
+                                        "13F-HR", ["2025-03-31", "2025-06-30"][idx]))
+                if cik_n == "1067983":
+                    # 13F-HR/A-Nachmeldung fuer Q2 (filing_date 2025-08-20 > 2025-06-15)
+                    entries.append((f"{cik_n}000000001", "2025-08-20", "13F-HR/A", "2025-06-30"))
+                if cik_n == "9999999":
+                    # gleiche Accession wie im Atom-Block unten (acc[-1] -> HOLD-Index 1)
+                    entries.append(("999999900000000001", "2025-07-01", "SC 13D", "2025-07-01"))
+                if cik_n == "8888888":
+                    entries.append((f"{cik_n}000000000000", "2025-05-15", "13F-HR", "2025-03-31"))
+                entries.append((f"{cik_n}000000000099", "2025-04-01", "10-K", "2024-12-31"))
+                return json.dumps({"name": names[cik10],
+                                   "filings": {"recent": {
+                                       "accessionNumber": [e[0] for e in entries],
+                                       "filingDate": [e[1] for e in entries],
+                                       "form": [e[2] for e in entries],
+                                       "reportDate": [e[3] for e in entries]}}}).encode()
             return json.dumps({"name": "NO FILER INC",
-                               "filings": {"recent": {"form": ["10-K"], "filingDate": ["2025-04-01"]}}}).encode()
+                               "filings": {"recent": {"accessionNumber": ["0000000001000000099"],
+                                                      "filingDate": ["2025-04-01"],
+                                                      "form": ["10-K"],
+                                                      "reportDate": ["2024-12-31"]}}}).encode()
         if "action=getcompany&company=" in url:
             # v44 Firmensuche: Starboard -> zwei Kandidaten (kein Auto-Pick)
             import urllib.parse as _up
@@ -375,7 +397,7 @@ def test_cik_aufloesung(sm_db):
     assert by["Berkshire Hathaway"]["cik"] == "0001067983"
     assert by["Berkshire Hathaway"]["filer_status"] == "13F-HR (config)"
     assert by["Berkshire Hathaway"]["bericht_name"] == "BERKSHIRE HATHAWAY INC"
-    assert by["Berkshire Hathaway"]["last_13f_hr"] == "2025-08-15"
+    assert by["Berkshire Hathaway"]["last_13f_hr"] == "2025-08-20"  # v45: 13F-HR/A-Nachmeldung, neueste filing_date gewinnt
     # Starboard hat CIK in config -> validiert
     sb = by["Starboard Value"]
     assert sb["cik"] == "0009999999"
