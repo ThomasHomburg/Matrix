@@ -61,6 +61,7 @@ import csv
 import json
 import logging
 import math
+import os
 import re
 import sqlite3
 import sys
@@ -142,6 +143,7 @@ class SecHttp:
         self.errors = errors if errors is not None else []
         self._sleep = sleeper  # injizierbar fuer Tests (429/403 ohne Warten)
         self.fonds = ""  # v45: aktueller Fondsname -- landet im Fehlerlog (statt "None")
+        self.accession = ""  # v46: aktuelle Accession -- landet im Fehlerlog
 
     def get(self, url: str, timeout: int = 30) -> bytes:
         gap = 1.0 / self.max_rps
@@ -161,18 +163,24 @@ class SecHttp:
                 last_exc = exc
                 if exc.code in (403, 429) and attempt < self.retry_tries:
                     w = self.retry_waits[min(attempt - 1, len(self.retry_waits) - 1)]
-                    logger.warning("SEC HTTP %d fuer %s -- Retry %d/%d in %.0fs (User-Agent: %r)",
-                                   exc.code, url, attempt, self.retry_tries - 1, w, self.user_agent)
+                    logger.warning("SEC HTTP %d fuer %s (fonds=%s accession=%s) -- Retry %d/%d in %.0fs (User-Agent: %r)",
+                                   exc.code, url, self.fonds or "-", self.accession or "-",
+                                   attempt, self.retry_tries - 1, w, self.user_agent)
                     self._sleep(w)
                     continue
+                # v46: JEDER HTTP-Fehler (auch 404) landet mit URL + Fonds + Accession
+                # im Fehlerlog -- 403/429 nach allen Retries mit UA-Hinweis
                 if exc.code in (403, 429):
-                    self.errors.append({
-                        "fonds": self.fonds or None,  # v45: Fondsnamen statt "None"
-                        "url": url, "http_code": exc.code,
-                        "error": (f"HTTP {exc.code} nach {self.retry_tries} Versuchen -- "
-                                  f"User-Agent pruefen (gesendet: {self.user_agent!r})")})
-                    logger.error("SEC HTTP %d fuer %s -- aufgegeben. User-Agent pruefen "
-                                 "(config smart_money.user_agent / sec.user_agent)", exc.code, url)
+                    err = (f"HTTP {exc.code} nach {self.retry_tries} Versuchen -- "
+                           f"User-Agent pruefen (gesendet: {self.user_agent!r})")
+                else:
+                    err = f"HTTP {exc.code}"
+                self.errors.append({
+                    "fonds": self.fonds or None,  # v45: Fondsnamen statt "None"
+                    "accession": self.accession or None,  # v46
+                    "url": url, "http_code": exc.code, "error": err})
+                logger.error("SEC HTTP %d fuer %s (fonds=%s accession=%s): %s",
+                             exc.code, url, self.fonds or "-", self.accession or "-", err)
                 raise
 
 
@@ -313,16 +321,61 @@ def load_company_tickers(http: SecHttp) -> dict[str, str]:
         return {}
 
 
+OPENFIGI_MIN_GAP_S = 2.5  # v46: max 25 OpenFIGI-Anfragen/Minute (mindestens 2,5 s Pause)
+
+
+def _openfigi_chunk_size() -> int:
+    """v46: ohne API-Key hoechstens 5 Auftraege je Anfrage; mit Umgebungsvariable
+    OPENFIGI_API_KEY bis 100."""
+    return 100 if os.environ.get("OPENFIGI_API_KEY", "").strip() else 5
+
+
+def _openfigi_post(http: SecHttp, url: str, payload: bytes) -> bytes:
+    """v46: OpenFIGI POST; bei HTTP 429 Wiederholung (http.retry_tries Versuche)."""
+    for attempt in range(1, http.retry_tries + 1):
+        try:
+            if http._fetcher is not None:
+                return http._fetcher(url)
+            headers = {"User-Agent": http.user_agent, "Content-Type": "application/json"}
+            key = os.environ.get("OPENFIGI_API_KEY", "").strip()
+            if key:
+                headers["X-OPENFIGI-APIKEY"] = key
+            req = urllib.request.Request(url, data=payload, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt < http.retry_tries:
+                w = http.retry_waits[min(attempt - 1, len(http.retry_waits) - 1)]
+                logger.warning("OpenFIGI HTTP 429 -- Retry %d/%d in %.0fs",
+                               attempt, http.retry_tries - 1, w)
+                http._sleep(w)
+                continue
+            raise
+
+
 def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
-                     errors: list | None = None) -> dict[str, str]:
-    """CUSIP -> Ticker. Reihenfolge: statisches cusip_map (Fixtures), dann
-    OpenFIGI POST (cusip_map_url), Rest -> Fehlerlog (nicht zuordenbar)."""
+                     errors: list | None = None, con: sqlite3.Connection | None = None,
+                     unmapped: list | None = None) -> dict[str, str]:
+    """v46: CUSIP -> Ticker. Reihenfolge: Tabelle cusip_map (dauerhaft in der DB,
+    wird nicht erneut abgefragt), statisches cusip_map (config/Fixtures), dann
+    OpenFIGI POST (cusip_map_url) in Chunks -- 5 ohne API-Key, 100 mit
+    OPENFIGI_API_KEY; mindestens 2,5 s Pause (max 25/Minute), 429 -> Retry.
+    Neu gemappte CUSIPs landen dauerhaft in cusip_map. Nicht zuordenbare CUSIPs
+    werden einmalig gesammelt (`unmapped`, bzw. eine Fehlerlog-Zeile), nicht als
+    Einzelzeilen."""
     out: dict[str, str] = {}
     cusips = [c for c in dict.fromkeys(cusips) if c]
+    if con is not None:
+        for c in cusips:
+            row = con.execute("SELECT ticker FROM cusip_map WHERE cusip=?", (c,)).fetchone()
+            if row and row[0]:
+                out[c] = str(row[0]).upper()
     static_map = {str(k): str(v).upper()
                   for k, v in (cfg.get("smart_money", {}).get("cusip_map") or {}).items()}
     rest = []
     for c in cusips:
+        if c in out:
+            continue
         if c in static_map:
             out[c] = static_map[c]
         else:
@@ -330,35 +383,42 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
     if rest:
         url = str(cfg.get("smart_money", {}).get("cusip_map_url", ""))
         if url:
-            try:
-                payload = json.dumps(
-                    [{"idType": "ID_CUSIP", "idValue": c} for c in rest]).encode()
-                gap = 1.0 / http.max_rps
-                wait = http._last + gap - time.monotonic()
+            size = _openfigi_chunk_size()
+            last_of = 0.0
+            for i in range(0, len(rest), size):
+                chunk = rest[i:i + size]
+                wait = last_of + OPENFIGI_MIN_GAP_S - time.monotonic()
                 if wait > 0:
-                    time.sleep(wait)
-                http._last = time.monotonic()
-                if http._fetcher is not None:
-                    raw = http._fetcher(url, payload) if False else http._fetcher(url)
-                else:
-                    req = urllib.request.Request(
-                        url, data=payload,
-                        headers={"User-Agent": http.user_agent,
-                                 "Content-Type": "application/json"})
-                    with urllib.request.urlopen(req, timeout=30) as r:
-                        raw = r.read()
-                data = json.loads(raw.decode("utf-8"))
-                for item, c in zip(data, rest):
-                    t = (item or {}).get("ticker")
-                    if t:
-                        out[c] = str(t).upper()
-            except Exception as exc:
-                logger.warning("OpenFIGI-Mapping fehlgeschlagen: %s", exc)
-    for c in rest:
-        if c not in out:
-            if errors is not None:
-                errors.append({"cusip": c, "error": "nicht zuordenbar (OpenFIGI/kein Mapping)"})
-            out[c] = c  # CUSIP als Schluessel, damit nichts verloren geht
+                    http._sleep(wait)
+                last_of = time.monotonic()
+                payload = json.dumps(
+                    [{"idType": "ID_CUSIP", "idValue": c} for c in chunk]).encode()
+                try:
+                    raw = _openfigi_post(http, url, payload)
+                    data = json.loads(raw.decode("utf-8"))
+                    for item, c in zip(data, chunk):
+                        t = (item or {}).get("ticker")
+                        if t:
+                            out[c] = str(t).upper()
+                except Exception as exc:
+                    logger.warning("OpenFIGI-Mapping fehlgeschlagen (Chunk ab Index %d): %s", i, exc)
+    miss = [c for c in rest if c not in out]
+    for c in miss:
+        out[c] = c  # CUSIP als Schluessel, damit nichts verloren geht
+    if con is not None and rest:
+        now = datetime.now().isoformat(timespec="seconds")
+        for c in rest:
+            if c in out and out[c] != c:
+                con.execute(
+                    "INSERT OR REPLACE INTO cusip_map (cusip, ticker, quelle, geladen_am) "
+                    "VALUES (?,?,?,?)", (c, out[c], "OpenFIGI", now))
+        con.commit()
+    if miss:
+        if unmapped is not None:
+            unmapped.extend(miss)
+        elif errors is not None:
+            errors.append({"cusip": ", ".join(miss),
+                           "error": f"{len(miss)} CUSIP(s) nicht zuordenbar (OpenFIGI/kein Mapping)"})
     return out
 
 
@@ -506,13 +566,19 @@ def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dic
                        cik, exc)
         entries = _atom_filings(cik, http, "13F", max_filings * 3)
     hr = [e for e in entries if e["form"].startswith("13F-HR")]
-    # neueste Fassung je report_date (13F-HR/A mit spaeterem filing_date gewinnt)
+    # v46: Perioden-Schluessel = report_date (reportDate), Fallback filing_date.
+    # Diagnose: bei leerem report_date (z. B. Atom-Fallback ohne Datum im
+    # category term) kollabierte die Dedupe auf einen Schluessel und die Sortierung
+    # lieferte die aeltesten Filings (2010/2011) statt der neuesten.
+    def _key(e: dict) -> str:
+        return e["report_date"] or e["filing_date"] or ""
+    # neueste Fassung je Periode (13F-HR/A mit spaeterem filing_date gewinnt)
     best: dict[str, dict] = {}
     for e in hr:
-        rd = e["report_date"]
-        if rd not in best or e["filing_date"] > best[rd]["filing_date"]:
-            best[rd] = e
-    out = sorted(best.values(), key=lambda e: e["report_date"])[-max_filings:]
+        k = _key(e)
+        if k not in best or e["filing_date"] > best[k]["filing_date"]:
+            best[k] = e
+    out = sorted(best.values(), key=lambda e: (_key(e), e["filing_date"]))[-max_filings:]
     return out
 
 
@@ -531,30 +597,79 @@ def list_13d_filings(cik: str, http: SecHttp, max_filings: int = 20) -> list[dic
     return [e for e in entries if e["form"] in ("SC 13D", "SC 13D/A", "13D", "13D-A")][:max_filings]
 
 
+def _retry_503(fn, http: SecHttp, retries: int = 3, waits=(5.0, 15.0, 30.0)):
+    """v46: 13D-Katalysatoren -- bei HTTP 503 dreimal wiederholen (5, 15, 30 s),
+    also Erstversuch + 3 Wiederholungen. Ein Fehlschlag nach allen Versuchen wird
+    vom Aufrufer abgefangen und blockiert den Lauf nicht."""
+    for attempt in range(1, retries + 2):
+        try:
+            return fn()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 503 and attempt <= retries:
+                logger.warning("SEC HTTP 503 (fonds=%s) -- Retry %d/%d in %.0fs",
+                               http.fonds or "-", attempt, retries, waits[attempt - 1])
+                http._sleep(waits[attempt - 1])
+                continue
+            raise
+
+
 def load_13f_quarter(cik: str, accession: str, http: SecHttp) -> tuple[str, list[dict], list[dict]]:
-    """Laedt infotable.xml eines 13F. Rueckgabe: (report_date, holdings, options)."""
+    """v46: Laedt die infotable eines 13F. Rueckgabe: (report_date, holdings, options).
+
+    Die Infotabelle wird NICHT ueber einen festen Dateinamen bestimmt (404 bei
+    abweichenden Namen wie form13fInfoTable.xml), sondern aus
+    <Filing-Verzeichnis>/index.json: alle .xml-Dateien der obersten Ebene ausser
+    primary_doc.xml (keine Unterordner wie xslForm13F_X02) werden gelesen; die
+    Datei, deren Wurzelelement informationTable ist, gewinnt. report_date kommt
+    aus periodOfReport (zuerst in der Infotabelle selbst, dann in den uebrigen
+    XML-Dateien inkl. primary_doc.xml)."""
     acc = _accession_digits(accession)
     cik_n = str(int(str(cik).lstrip("0") or "0"))
     base = f"{_sec_base()}/Archives/edgar/data/{cik_n}/{acc}"
     idx = json.loads(http.get(f"{base}/index.json").decode("utf-8"))
     items = idx.get("directory", {}).get("item", [])
-    infotable = next((i["name"] for i in items if i.get("name", "").lower() == "infotable.xml"),
-                     "infotable.xml")
-    report_date = ""
-    for item in items:
-        n = item.get("name", "")
-        if n.endswith(".xml") and "infotable" not in n.lower():
+    xml_files = [str(i.get("name", "")) for i in items
+                 if str(i.get("name", "")).lower().endswith(".xml")
+                 and i.get("type") != "directory"
+                 and "/" not in str(i.get("name", ""))]
+    fetched: dict[str, ET.Element] = {}
+
+    def _root(name: str) -> ET.Element:
+        if name not in fetched:
+            fetched[name] = ET.fromstring(http.get(f"{base}/{name}"))
+        return fetched[name]
+
+    def _period_of(root: ET.Element) -> str:
+        for el in root.iter():
+            if el.tag.split("}")[-1] == "periodOfReport" and el.text:
+                return el.text.strip()[:10]
+        return ""
+
+    infotable = None
+    for name in xml_files:
+        if name.lower() == "primary_doc.xml":
+            continue
+        try:
+            root = _root(name)
+        except Exception:
+            continue
+        if root.tag.split("}")[-1] == "informationTable" and infotable is None:
+            infotable = name
+    if infotable is None:
+        raise ValueError(f"keine informationTable in {base} gefunden (xml-Dateien: {xml_files})")
+    info_root = fetched[infotable]
+    report_date = _period_of(info_root)
+    if not report_date:
+        for name in xml_files:
+            if name == infotable:
+                continue
             try:
-                mroot = ET.fromstring(http.get(f"{base}/{n}"))
-                for el in mroot.iter():
-                    if el.tag.split("}")[-1] == "periodOfReport" and el.text:
-                        report_date = el.text.strip()[:10]
-                        break
-                if report_date:
-                    break
+                report_date = _period_of(_root(name))
             except Exception:
                 continue
-    holdings, options = _parse_infotable(http.get(f"{base}/{infotable}"))
+            if report_date:
+                break
+    holdings, options = _parse_infotable(ET.tostring(info_root))
     return report_date, holdings, options
 
 
@@ -676,12 +791,14 @@ def store_quarter(con: sqlite3.Connection, fonds: str, quartal: str, filing_datu
 
 
 def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
-              fetcher=None, report: list | None = None) -> list[dict]:
+              fetcher=None, report: list | None = None, sleeper=None) -> list[dict]:
     """Laedt die letzten `quarters` Quartale je Fonds (13F-HR, A-Fassung gewinnt),
     speichert Positionen/Optionen, sammelt 13D-Katalysatoren der Aktivisten.
 
     Rueckgabe: Fehlerliste [{fonds, error}]. `report` (optional) bekommt die
-    CIK-Aufloesung + Filer-Status [{name, cik, filer_status}].
+    CIK-Aufloesung + Filer-Status [{name, cik, filer_status}] -- v46 ergaenzt um
+    "filings" (letzte 8: form, report_date, filing_date, accession je Fonds).
+    `sleeper` injizierbar fuer Tests (Retry-Wartezeiten ohne echtes Schlafen).
     """
     sm = cfg.get("smart_money", {})
     nq = int(quarters if quarters is not None else sm.get("quarters", 8))
@@ -693,8 +810,9 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
     http = SecHttp(user_agent_from_cfg(cfg),
                    float(sm.get("max_requests_per_second", 5.0)),
                    tuple(_waits or [2, 5, 10]), int(r.get("versuche", 3)),
-                   fetcher=fetcher, errors=errors)
+                   fetcher=fetcher, errors=errors, sleeper=sleeper or time.sleep)
     con = connect(db_path)
+    unmapped: list[str] = []  # v46: nicht zuordenbare CUSIPs -- einmal am Ende als Liste
     ciks = resolve_all_ciks(cfg, http)
     if report is not None:
         report.extend(ciks)
@@ -715,17 +833,27 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                 logger.warning("smart_money: %s (CIK %s) hat keine 13F-HR -> uebersprungen", name, cik)
                 errors.append({"fonds": name, "error": "keine 13F-HR gefunden"})
                 continue
+            entry["filings"] = filings[-8:]  # v46: letzte 8 Filings je Fonds im Bericht
             qdata: list[tuple[str, str, list, list]] = []
             for f in filings:
-                rd, holdings, options = load_13f_quarter(cik, f["accession"], http)
-                qdata.append((rd or f["report_date"], f["filing_date"], holdings, options))
+                http.accession = f["accession"]  # v46: Accession im HTTP-Fehlerlog
+                try:
+                    rd, holdings, options = load_13f_quarter(cik, f["accession"], http)
+                except Exception as exc:
+                    logger.error("smart_money: %s (CIK %s) Accession %s: %s", name, cik,
+                                 f["accession"], exc)
+                    errors.append({"fonds": name, "accession": f["accession"],
+                                   "error": str(exc)[:200]})
+                    continue
+                # v46: Label-Datum = reportDate (periodOfReport), Fallback filingDate
+                qdata.append((rd or f["report_date"] or f["filing_date"], f["filing_date"], holdings, options))
             qdata.sort(key=lambda x: x[0])
             qdata = qdata[-nq:]
             # CUSIP->Ticker fuer ALLE Quartale vorab (damit GOOG/GOOGL-Merging
             # VOR dem Vorquartals-Vergleich passiert: gleiche Aktie je Fonds)
             all_cusips = list({h["cusip"] for _rd, _fd, hl, _op in qdata for h in hl}
                               | {o["cusip"] for _rd, _fd, _hl, op in qdata for o in op})
-            c2t = cusip_to_tickers(all_cusips, http, cfg, errors=errors)
+            c2t = cusip_to_tickers(all_cusips, http, cfg, errors=errors, con=con, unmapped=unmapped)
             prev: dict[str, dict] = {}
             prev_total = None
             for report_date, filing_date, holdings, options in qdata:
@@ -750,9 +878,10 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
             # Aktivist: 13D/13D-A als Katalysator sammeln (gewicht 0)
             if fcfg.get("typ") == "aktivist" or float(gew) == 0.0:
                 try:
-                    for d in list_13d_filings(cik, http):
-                        cusip, acc = load_13d_target(cik, d["accession"], http)
-                        t = merge_tickers(cusip_to_tickers([cusip], http, cfg).get(cusip, cusip), cfg) if cusip else ""
+                    # v46: bei HTTP 503 3x Retry (5, 15, 30 s); Fehlschlag blockiert nicht
+                    for d in _retry_503(lambda: list_13d_filings(cik, http), http):
+                        cusip, acc = _retry_503(lambda: load_13d_target(cik, d["accession"], http), http)
+                        t = merge_tickers(cusip_to_tickers([cusip], http, cfg, con=con, unmapped=unmapped).get(cusip, cusip), cfg) if cusip else ""
                         if t:
                             con.execute(
                                 """INSERT INTO smart_money_katalysator (ticker, fonds, datum, quelle_url, form)
@@ -766,6 +895,11 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
         except Exception as exc:
             logger.error("smart_money: Fehler bei %s (CIK %s): %s", name, cik, exc)
             errors.append({"fonds": name, "error": str(exc)[:200]})
+    # v46: nicht zuordenbare CUSIPs einmal am Ende als Liste, nicht als Einzelzeilen
+    uniq_unmapped = list(dict.fromkeys(unmapped))
+    if uniq_unmapped:
+        errors.append({"cusip": ", ".join(uniq_unmapped),
+                       "error": f"{len(uniq_unmapped)} CUSIP(s) nicht zuordenbar (OpenFIGI/kein Mapping)"})
     return errors
 
 
@@ -986,10 +1120,17 @@ def cmd_fetch(args) -> None:
                  f" | letztes 13F-HR: {e.get('last_13f_hr') or '-'}" if e.get("cik") else ""))
         for t in (e.get("treffer") or []):
             print(f"      Treffer: cik={t['cik']} name={t['name']!r} letztes 13F-HR={t['last_13f_hr']}")
+        # v46: letzte 8 Filings je Fonds mit Label (aus reportDate), form, reportDate, filingDate, accession
+        for f in (e.get("filings") or [])[-8:]:
+            label = quartal_of(f["report_date"] or f["filing_date"])
+            print(f"      Filing: {label:<9} {f['form']:<9} report={f['report_date'] or '-'}"
+                  f" filing={f['filing_date'] or '-'} acc={f['accession']}")
     if errors:
         print(f"\nFehlerlog ({len(errors)}):")
         for e in errors:
-            print(f"  {e.get('fonds') or e.get('cusip') or e.get('url') or '-'}: {e['error'][:120]}")
+            label = e.get('fonds') or e.get('cusip') or e.get('url') or '-'
+            acc = f" acc={e['accession']}" if e.get('accession') else ""
+            print(f"  {label}{acc}: {e['error'][:120]}")
     else:
         print("\nKeine Fehler -- alle Fonds aktualisiert.")
 
@@ -1064,6 +1205,18 @@ def cmd_rationale_import(args) -> None:
 def cmd_show(args) -> None:
     con = connect(Path(args.db))
     con.row_factory = sqlite3.Row
+    if args.fonds:
+        # v46: Perioden + Anzahl der Positionen je Quartal eines Fonds
+        rows = con.execute(
+            "SELECT quartal, COUNT(*) AS n, MAX(filing_datum) AS filing_datum "
+            "FROM smart_money_positions WHERE fonds=? GROUP BY quartal ORDER BY quartal DESC",
+            (args.fonds,)).fetchall()
+        print(f"=== smart_money_positions fonds={args.fonds} ({len(rows)} Perioden) ===")
+        for r in rows:
+            print(f"{r['quartal']}  positionen={r['n']}  filing={r['filing_datum'] or '-'}")
+        return
+    if not args.ticker:
+        raise SystemExit("show: ticker oder --fonds angeben")
     rows = con.execute(
         "SELECT * FROM smart_money_positions WHERE ticker=? ORDER BY quartal DESC, fonds",
         (args.ticker.upper(),)).fetchall()
@@ -1096,8 +1249,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_r.add_argument("csv_file", nargs="?", default=None,
                      help="Default: config smart_money.rationale_csv (rationale_import.csv)")
     p_r.set_defaults(func=cmd_rationale_import)
-    p_sh = sub.add_parser("show", help="Positionen eines Tickers")
-    p_sh.add_argument("ticker")
+    p_sh = sub.add_parser("show", help="Positionen eines Tickers oder Perioden je Fonds (--fonds)")
+    p_sh.add_argument("ticker", nargs="?", default=None)
+    p_sh.add_argument("--fonds", default=None,
+                      help="Perioden + Anzahl der Positionen je Quartal dieses Fonds")
     p_sh.set_defaults(func=cmd_show)
     return p.parse_args(argv)
 

@@ -139,6 +139,14 @@ CREATE TABLE IF NOT EXISTS smart_money_katalysator (
 );
 CREATE INDEX IF NOT EXISTS idx_smcat_ticker ON smart_money_katalysator (ticker);
 
+-- v46: dauerhaftes CUSIP->Ticker-Mapping (OpenFIGI); wird nicht erneut abgefragt
+CREATE TABLE IF NOT EXISTS cusip_map (
+    cusip       TEXT PRIMARY KEY,
+    ticker      TEXT NOT NULL,
+    quelle      TEXT,                      -- OpenFIGI | manuell
+    geladen_am  TEXT NOT NULL
+);
+
 -- v42/v43: Rationale (nur manuell oder per Import rationale_import.csv, Pflicht quelle_url)
 CREATE TABLE IF NOT EXISTS smart_money_rationale (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
