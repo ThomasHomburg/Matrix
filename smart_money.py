@@ -61,6 +61,7 @@ import csv
 import json
 import logging
 import math
+import re
 import sqlite3
 import sys
 import time
@@ -140,6 +141,7 @@ class SecHttp:
         self._fetcher = fetcher
         self.errors = errors if errors is not None else []
         self._sleep = sleeper  # injizierbar fuer Tests (429/403 ohne Warten)
+        self.fonds = ""  # v45: aktueller Fondsname -- landet im Fehlerlog (statt "None")
 
     def get(self, url: str, timeout: int = 30) -> bytes:
         gap = 1.0 / self.max_rps
@@ -165,6 +167,7 @@ class SecHttp:
                     continue
                 if exc.code in (403, 429):
                     self.errors.append({
+                        "fonds": self.fonds or None,  # v45: Fondsnamen statt "None"
                         "url": url, "http_code": exc.code,
                         "error": (f"HTTP {exc.code} nach {self.retry_tries} Versuchen -- "
                                   f"User-Agent pruefen (gesendet: {self.user_agent!r})")})
@@ -401,6 +404,32 @@ def _parse_infotable(xml_bytes: bytes) -> tuple[list[dict], list[dict]]:
     return holdings, options
 
 
+_ACCESSION_RE = re.compile(r"(\d{10}-\d{2}-\d{6})")
+
+
+def _accession_from_href(href: str) -> str:
+    r"""v45: Accession aus einem EDGAR-Atom-Link. Echtes Linkformat:
+    .../Archives/edgar/data/<cik>/<accession-ohne-Bindestriche>/<accession-mit-Bindestrichen>-index.htm
+    -> Regex (\d{10}-\d{2}-\d{6}) gewinnt, damit das '-index.htm'-Suffix nicht
+    in die Accession gelangt. Fallback: letztes Pfadsegment ohne Index-Suffix."""
+    m = _ACCESSION_RE.search(href or "")
+    if m:
+        return m.group(1)
+    seg = (href or "").rstrip("/").split("/")[-1]
+    return re.sub(r"-?index\.html?$", "", seg)
+
+
+def _accession_digits(accession: str) -> str:
+    r"""v45: Accession fuer den Archives-Pfad -- Bindestriche entfernen. Traegt der
+    Wert das Muster \d{10}-\d{2}-\d{6}, wird nur dieser Teil verwendet (Schutz gegen
+    Suffixe wie '-index.htm': .../000119312526352200/index.json statt
+    .../000119312526352200index.htm/index.json)."""
+    m = _ACCESSION_RE.search(accession or "")
+    if m:
+        return m.group(1).replace("-", "")
+    return (accession or "").replace("-", "")
+
+
 def _atom_entries(xml_bytes: bytes) -> list[dict]:
     """Atom-Feed (browse-edgar) -> [{accession, filing_date, form, report_date}]."""
     root = ET.fromstring(xml_bytes)
@@ -412,8 +441,7 @@ def _atom_entries(xml_bytes: bytes) -> list[dict]:
         link = e.find("a:link", ns)
         accession = ""
         if link is not None:
-            href = link.get("href", "")
-            accession = href.rstrip("/").split("/")[-1] if href else ""
+            accession = _accession_from_href(link.get("href", ""))
         # category term enthaelt form + period (z. B. "13F-HR 2025-06-30")
         form, report_date = "", ""
         cat = e.find("a:category", ns)
@@ -434,13 +462,49 @@ def _atom_entries(xml_bytes: bytes) -> list[dict]:
     return out
 
 
-def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dict]:
-    """Letzte 13F-HR (+13F-HR/A) eines CIK. Bei Nachmeldung (A) ersetzt die
-    neuere Fassung das Original zum selben report_date (neueste filing_date gewinnt)."""
+def _submissions_entries(cik: str, http: SecHttp) -> list[dict]:
+    """v45: Primaere Filing-Liste -- https://data.sec.gov/submissions/CIK##########.json,
+    filings.recent (accessionNumber, form, filingDate, reportDate) als
+    [{accession, filing_date, form, report_date}]. accessionNumber traegt
+    Bindestriche (z. B. '0001193125-26-352200')."""
+    cik10 = str(cik).zfill(10)
+    url = f"https://data.sec.gov/submissions/CIK{cik10}.json"
+    data = json.loads(http.get(url).decode("utf-8"))
+    rec = data.get("filings", {}).get("recent", {})
+    accs = rec.get("accessionNumber", [])
+    forms = rec.get("form", [])
+    fdates = rec.get("filingDate", [])
+    rdates = rec.get("reportDate", [])
+    out = []
+    for i, acc in enumerate(accs):
+        out.append({"accession": str(acc),
+                    "filing_date": str(fdates[i]) if i < len(fdates) else "",
+                    "form": str(forms[i]) if i < len(forms) else "",
+                    "report_date": str(rdates[i]) if i < len(rdates) else ""})
+    return out
+
+
+def _atom_filings(cik: str, http: SecHttp, type_param: str, count: int) -> list[dict]:
+    """v45: Fallback Filing-Liste per Atom-Feed (browse-edgar ...&output=atom)."""
     cik_n = str(int(str(cik).lstrip("0") or "0"))
     url = (f"{_sec_base()}/cgi-bin/browse-edgar?action=getcompany&CIK={cik_n}"
-           f"&type=13F&dateb=&owner=include&count={max_filings * 3}&output=atom")
-    entries = _atom_entries(http.get(url))
+           f"&type={type_param}&dateb=&owner=include&count={count}&output=atom")
+    return _atom_entries(http.get(url))
+
+
+def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dict]:
+    """v45: Letzte 13F-HR (+13F-HR/A) eines CIK. Primaer aus
+    data.sec.gov/submissions/CIK##########.json (filings.recent), Atom-Feed nur
+    noch Fallback. Bei Nachmeldung (A) ersetzt die neuere Fassung das Original
+    zum selben report_date (neueste filing_date gewinnt)."""
+    try:
+        entries = _submissions_entries(cik, http)
+        if not entries:
+            raise ValueError("submissions ohne filings.recent")
+    except Exception as exc:
+        logger.warning("submissions-Liste CIK %s fehlgeschlagen (%s) -- Fallback Atom-Feed",
+                       cik, exc)
+        entries = _atom_filings(cik, http, "13F", max_filings * 3)
     hr = [e for e in entries if e["form"].startswith("13F-HR")]
     # neueste Fassung je report_date (13F-HR/A mit spaeterem filing_date gewinnt)
     best: dict[str, dict] = {}
@@ -453,17 +517,23 @@ def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dic
 
 
 def list_13d_filings(cik: str, http: SecHttp, max_filings: int = 20) -> list[dict]:
-    """13D/13D-A eines (aktivistischen) Filers: [{accession, filing_date, form, report_date}]."""
-    cik_n = str(int(str(cik).lstrip("0") or "0"))
-    url = (f"{_sec_base()}/cgi-bin/browse-edgar?action=getcompany&CIK={cik_n}"
-           f"&type=SC+13D&dateb=&owner=include&count={max_filings}&output=atom")
-    entries = _atom_entries(http.get(url))
+    """v45: 13D/13D-A eines (aktivistischen) Filers:
+    [{accession, filing_date, form, report_date}]. Primaer submissions-JSON,
+    Atom-Feed nur Fallback."""
+    try:
+        entries = _submissions_entries(cik, http)
+        if not entries:
+            raise ValueError("submissions ohne filings.recent")
+    except Exception as exc:
+        logger.warning("submissions-Liste CIK %s fehlgeschlagen (%s) -- Fallback Atom-Feed",
+                       cik, exc)
+        entries = _atom_filings(cik, http, "SC+13D", max_filings)
     return [e for e in entries if e["form"] in ("SC 13D", "SC 13D/A", "13D", "13D-A")][:max_filings]
 
 
 def load_13f_quarter(cik: str, accession: str, http: SecHttp) -> tuple[str, list[dict], list[dict]]:
     """Laedt infotable.xml eines 13F. Rueckgabe: (report_date, holdings, options)."""
-    acc = accession.replace("-", "")
+    acc = _accession_digits(accession)
     cik_n = str(int(str(cik).lstrip("0") or "0"))
     base = f"{_sec_base()}/Archives/edgar/data/{cik_n}/{acc}"
     idx = json.loads(http.get(f"{base}/index.json").decode("utf-8"))
@@ -491,7 +561,7 @@ def load_13f_quarter(cik: str, accession: str, http: SecHttp) -> tuple[str, list
 def load_13d_target(cik: str, accession: str, http: SecHttp) -> tuple[str, str]:
     """13D/13D-A: Ziel-Ticker (CUSIP der issuer) + filing_date.
     Rueckgabe: (cusip, filing_date)."""
-    acc = accession.replace("-", "")
+    acc = _accession_digits(accession)
     cik_n = str(int(str(cik).lstrip("0") or "0"))
     base = f"{_sec_base()}/Archives/edgar/data/{cik_n}/{acc}"
     idx = json.loads(http.get(f"{base}/index.json").decode("utf-8"))
@@ -631,6 +701,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
     funds = {f["name"]: f for f in sm.get("funds", [])}
     for entry in ciks:
         name, cik = entry["name"], entry["cik"]
+        http.fonds = name  # v45: HTTP-Fehler (403/429) im Fehlerlog dem Fonds zuordnen
         if not cik:
             logger.warning("smart_money: %s -> %s -> uebersprungen (CIK manuell in config.yaml smart_money.funds eintragen; Treffer siehe Bericht)",
                            name, entry["filer_status"])
@@ -687,7 +758,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                                 """INSERT INTO smart_money_katalysator (ticker, fonds, datum, quelle_url, form)
                                    VALUES (?,?,?,?,?)""",
                                 (t, name, d["filing_date"],
-                                 f"{_sec_base()}/Archives/edgar/data/{str(int(cik.lstrip('0') or '0'))}/{d['accession'].replace('-', '')}/",
+                                 f"{_sec_base()}/Archives/edgar/data/{str(int(cik.lstrip('0') or '0'))}/{_accession_digits(d['accession'])}/",
                                  d["form"]))
                     con.commit()
                 except Exception as exc:
@@ -918,7 +989,7 @@ def cmd_fetch(args) -> None:
     if errors:
         print(f"\nFehlerlog ({len(errors)}):")
         for e in errors:
-            print(f"  {e.get('fonds') or e.get('cusip')}: {e['error'][:120]}")
+            print(f"  {e.get('fonds') or e.get('cusip') or e.get('url') or '-'}: {e['error'][:120]}")
     else:
         print("\nKeine Fehler -- alle Fonds aktualisiert.")
 
