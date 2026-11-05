@@ -467,6 +467,16 @@ def _parse_infotable(xml_bytes: bytes) -> tuple[list[dict], list[dict]]:
 _ACCESSION_RE = re.compile(r"(\d{10}-\d{2}-\d{6})")
 
 
+def _normalize_date(s: str) -> str:
+    """v47: '2026-06-30' bleibt; US-Format '06-30-2026' (MM-DD-YYYY) -> '2026-06-30'.
+    (Alt: quartal_of las '06-30-2026' als y=06, m=30 -> Label '06-Q10'.)"""
+    s = (s or "").strip()[:10]
+    parts = s.split("-")
+    if len(parts) == 3 and len(parts[0]) <= 2:
+        return f"{parts[2]}-{parts[0]}-{parts[1]}"
+    return s
+
+
 def _accession_from_href(href: str) -> str:
     r"""v45: Accession aus einem EDGAR-Atom-Link. Echtes Linkformat:
     .../Archives/edgar/data/<cik>/<accession-ohne-Bindestriche>/<accession-mit-Bindestrichen>-index.htm
@@ -566,12 +576,13 @@ def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dic
                        cik, exc)
         entries = _atom_filings(cik, http, "13F", max_filings * 3)
     hr = [e for e in entries if e["form"].startswith("13F-HR")]
-    # v46: Perioden-Schluessel = report_date (reportDate), Fallback filing_date.
-    # Diagnose: bei leerem report_date (z. B. Atom-Fallback ohne Datum im
-    # category term) kollabierte die Dedupe auf einen Schluessel und die Sortierung
+    # v47: Perioden-Schluessel = normalisiertes report_date (reportDate), Fallback
+    # filing_date. 13F-HR + 13F-HR/A derselben Periode (auch gemischte Datumsformate)
+    # ergeben EINEN Schluessel -- neueste filing_date gewinnt.
+    # Diagnose v46: bei leerem report_date kollabierte die Dedupe und die Sortierung
     # lieferte die aeltesten Filings (2010/2011) statt der neuesten.
     def _key(e: dict) -> str:
-        return e["report_date"] or e["filing_date"] or ""
+        return _normalize_date(e["report_date"]) or e["filing_date"] or ""
     # neueste Fassung je Periode (13F-HR/A mit spaeterem filing_date gewinnt)
     best: dict[str, dict] = {}
     for e in hr:
@@ -699,9 +710,12 @@ def load_13d_target(cik: str, accession: str, http: SecHttp) -> tuple[str, str]:
 
 
 def quartal_of(report_date: str) -> str:
-    if not report_date:
+    """v47: Quartalslabel AUSSCHLIESSLICH aus dem reportDate des Filings
+    (2026-06-30 -> 2026-Q2). US-Format MM-DD-YYYY wird normalisiert. Leer -> ''."""
+    rd = _normalize_date(report_date)
+    if not rd:
         return ""
-    y, m, _d = report_date.split("-")[:3]
+    y, m, _d = rd.split("-")[:3]
     return f"{y}-Q{(int(m) - 1) // 3 + 1}"
 
 
@@ -739,33 +753,64 @@ def compare_quarters(prev: dict[str, dict], cur: dict[str, dict]) -> list[dict]:
 # DB
 # --------------------------------------------------------------------------
 
+def _migrate_positions(con: sqlite3.Connection) -> None:
+    """v47: Migration smart_money_positions -- Spalte report_date ergaenzen und
+    bestehende Zeilen aus der gespeicherten reportDate neu beschriften
+    (quartal = quartal_of(report_date)). Fehlt die Spalte ganz (alte DB), sind die
+    Zeilen nicht neu beschriftbar -> sie werden entfernt und beim naechsten fetch
+    neu geladen."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(smart_money_positions)")}
+    if not cols:
+        return
+    if "report_date" not in cols:
+        con.execute("ALTER TABLE smart_money_positions ADD COLUMN report_date TEXT")
+        con.execute("DELETE FROM smart_money_positions")  # ohne reportDate: neu laden
+        con.commit()
+        return
+    rows = con.execute(
+        "SELECT rowid, report_date, quartal FROM smart_money_positions "
+        "WHERE report_date IS NOT NULL AND report_date != ''").fetchall()
+    changed = False
+    for rowid, rd, q in rows:
+        nq = quartal_of(rd)
+        if nq and nq != q:
+            con.execute("UPDATE smart_money_positions SET quartal=? WHERE rowid=?", (nq, rowid))
+            changed = True
+    if changed:
+        con.commit()
+
+
 def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
     con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     con.commit()
+    _migrate_positions(con)
     return con
 
 
 def store_quarter(con: sqlite3.Connection, fonds: str, quartal: str, filing_datum: str,
                   rows: list[dict], cusip2ticker: dict[str, str], portfolio_total: float,
                   options: list[dict], cfg: dict, prev_total: float | None,
-                  by_ticker_keys: list | None = None) -> int:
-    """Schreibt ein (Fonds, Quartal) in smart_money_positions + smart_money_options."""
+                  by_ticker_keys: list | None = None, report_date: str = "") -> int:
+    """Schreibt ein (Fonds, Quartal) in smart_money_positions + smart_money_options.
+    v47: report_date (reportDate des Filings) wird mitgespeichert -- Basis des
+    Quartalslabels und der Migration."""
     n = 0
     for r in rows:
         ticker = merge_tickers(cusip2ticker.get(r["cusip"], r["cusip"]), cfg)
         anteil = (r["wert"] / portfolio_total) if portfolio_total > 0 and r["wert"] == r["wert"] else None
         con.execute(
             """INSERT INTO smart_money_positions
-               (fonds, quartal, filing_datum, ticker, shares, wert, anteil_portfolio,
+               (fonds, quartal, report_date, filing_datum, ticker, shares, wert, anteil_portfolio,
                 aktion, aenderung_pct, positions_gesamt, rotation_pct, geladen_am)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(fonds, quartal, ticker) DO UPDATE SET
+                 report_date=excluded.report_date,
                  filing_datum=excluded.filing_datum, shares=excluded.shares, wert=excluded.wert,
                  anteil_portfolio=excluded.anteil_portfolio, aktion=excluded.aktion,
                  aenderung_pct=excluded.aenderung_pct, positions_gesamt=excluded.positions_gesamt,
                  rotation_pct=excluded.rotation_pct, geladen_am=excluded.geladen_am""",
-            (fonds, quartal, filing_datum, ticker, r["shares"], r["wert"], anteil,
+            (fonds, quartal, report_date, filing_datum, ticker, r["shares"], r["wert"], anteil,
              r["aktion"], r["aenderung_pct"], len(by_ticker_keys), None,
              datetime.now().isoformat(timespec="seconds")))
         n += 1
@@ -845,9 +890,10 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                     errors.append({"fonds": name, "accession": f["accession"],
                                    "error": str(exc)[:200]})
                     continue
-                # v46: Label-Datum = reportDate (periodOfReport), Fallback filingDate
-                qdata.append((rd or f["report_date"] or f["filing_date"], f["filing_date"], holdings, options))
-            qdata.sort(key=lambda x: x[0])
+                # v47: Label-Datum AUSSCHLIESSLICH reportDate (submissions bevorzugt,
+                # Fallback periodOfReport aus dem XML); filing_date nur fuer Sortierung
+                qdata.append((f["report_date"] or rd, f["filing_date"], holdings, options))
+            qdata.sort(key=lambda x: x[0] or x[1])
             qdata = qdata[-nq:]
             # CUSIP->Ticker fuer ALLE Quartale vorab (damit GOOG/GOOGL-Merging
             # VOR dem Vorquartals-Vergleich passiert: gleiche Aktie je Fonds)
@@ -857,7 +903,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
             prev: dict[str, dict] = {}
             prev_total = None
             for report_date, filing_date, holdings, options in qdata:
-                q = quartal_of(report_date)
+                q = quartal_of(report_date)  # v47: Label exklusiv aus reportDate
                 # nach Ticker mergen (GOOGL->GOOG): shares + wert summieren
                 by_ticker: dict[str, dict] = {}
                 for h in holdings:
@@ -871,7 +917,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                 rows = compare_quarters(prev, by_ticker)
                 total = sum(h["value"] for h in by_ticker.values() if h["value"] == h["value"])
                 n = store_quarter(con, name, q, filing_date, rows, c2t, total, options, cfg, prev_total,
-                                  by_ticker_keys=list(by_ticker))
+                                  by_ticker_keys=list(by_ticker), report_date=report_date)
                 logger.info("smart_money: %s %s -> %d Positionen (%d Optionen)", name, q, n, len(options))
                 prev = by_ticker
                 prev_total = total
@@ -1122,7 +1168,7 @@ def cmd_fetch(args) -> None:
             print(f"      Treffer: cik={t['cik']} name={t['name']!r} letztes 13F-HR={t['last_13f_hr']}")
         # v46: letzte 8 Filings je Fonds mit Label (aus reportDate), form, reportDate, filingDate, accession
         for f in (e.get("filings") or [])[-8:]:
-            label = quartal_of(f["report_date"] or f["filing_date"])
+            label = quartal_of(f["report_date"])  # v47: Label exklusiv aus reportDate
             print(f"      Filing: {label:<9} {f['form']:<9} report={f['report_date'] or '-'}"
                   f" filing={f['filing_date'] or '-'} acc={f['accession']}")
     if errors:
