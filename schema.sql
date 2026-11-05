@@ -98,7 +98,8 @@ CREATE INDEX IF NOT EXISTS idx_decisions_datum ON decisions (datum);
 CREATE TABLE IF NOT EXISTS smart_money_positions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     fonds           TEXT NOT NULL,             -- Fondsname (config smart_money.funds)
-    quartal         TEXT NOT NULL,             -- YYYY-Qn aus periodOfReport
+    quartal         TEXT NOT NULL,             -- YYYY-Qn aus reportDate (v47: exklusiv reportDate)
+    report_date     TEXT,                      -- v47: reportDate des Filings (Label-Basis + Migration)
     filing_datum    TEXT,                      -- ISO-Datum des (neuesten) 13F-Filings
     ticker          TEXT NOT NULL,
     shares          REAL,
