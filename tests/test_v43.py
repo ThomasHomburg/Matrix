@@ -218,7 +218,7 @@ def test_hr_a_ersetzt_original(sm_db):
     con.row_factory = sqlite3.Row
     r = con.execute(
         "SELECT shares, filing_datum FROM smart_money_positions "
-        "WHERE fonds='Berkshire Hathaway' AND ticker='AAA' AND quartal='2025-Q2'").fetchone()
+        "WHERE fonds='Berkshire Hathaway' AND ticker='AAA' AND periode='2025-Q2'").fetchone()
     assert r["shares"] == pytest.approx(1800.0)      # A-Fassung, nicht 1500
     assert r["filing_datum"] == "2025-08-20"          # spaeteres filing_date gewinnt
 
@@ -229,7 +229,7 @@ def test_aktionen_zwei_quartale(sm_db):
     cfg, db, _ = sm_db
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row
-    rows = {(r["fonds"], r["ticker"], r["quartal"]): dict(r) for r in con.execute(
+    rows = {(r["fonds"], r["ticker"], r["periode"]): dict(r) for r in con.execute(
         "SELECT * FROM smart_money_positions")}
     b = "Berkshire Hathaway"
     assert rows[(b, "AAA", "2025-Q2")]["aktion"] == "erhoeht"
@@ -259,7 +259,7 @@ def test_googl_zusammengefasst_optionen_getrennt(sm_db):
         "SELECT DISTINCT ticker FROM smart_money_positions WHERE fonds='Berkshire Hathaway'")}
     assert "GOOGL" not in tickers and "GOOG" in tickers
     g = con.execute("SELECT * FROM smart_money_positions WHERE fonds='Berkshire Hathaway' "
-                    "AND ticker='GOOG' AND quartal='2025-Q2'").fetchone()
+                    "AND ticker='GOOG' AND periode='2025-Q2'").fetchone()
     assert g["shares"] == pytest.approx(300.0)        # 100 GOOG + 200 GOOGL
     assert g["aktion"] == "erhoeht"                    # 200 -> 300
     # Optionen landen in smart_money_options, NICHT in positions
@@ -332,7 +332,7 @@ def test_gewicht_halb_und_aktivist_nur_katalysator(sm_db):
     # Gewicht 0,5 allein reicht nicht fuer Score 3: einzelner Duquesne-Kauf, Anteil < 5 %
     con = sqlite3.connect(db)
     con.execute("""INSERT INTO smart_money_positions
-                   (fonds, quartal, filing_datum, ticker, shares, wert, anteil_portfolio, aktion,
+                   (fonds, periode, filing_datum, ticker, shares, wert, anteil_portfolio, aktion,
                     aenderung_pct, positions_gesamt, rotation_pct, geladen_am)
                    VALUES ('Duquesne Family Office', '2025-Q2', '2025-08-15', 'SOLO', 10.0, 1000.0,
                            0.001, 'neu', NULL, 1, NULL, 'x')""")

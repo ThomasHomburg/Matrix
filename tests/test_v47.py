@@ -135,9 +135,10 @@ def test_fetch_schreibt_label_report_date_und_keine_duplikate(tmp_path):
     assert not [e for e in errors if e.get("fonds")], errors
     con = sqlite3.connect(db)
     rows = con.execute(
-        "SELECT quartal, report_date, filing_datum, ticker FROM smart_money_positions "
+        "SELECT periode, report_date, accession, filing_datum, cusip, ticker FROM smart_money_positions "
         "WHERE fonds='Berkshire Hathaway'").fetchall()
-    assert rows == [("2026-Q2", "2026-06-30", "2026-08-20", "AAA")]   # eine Periode, neueste Fassung
+    # eine Periode, neueste Fassung (13F-HR/A, Accession ...352200), cusip + ticker getrennt
+    assert rows == [("2026-Q2", "2026-06-30", "0001193125-26-352200", "2026-08-20", "111111111", "AAA")]
 
 
 # --------------------------------------------------------------------------
@@ -146,16 +147,16 @@ def test_fetch_schreibt_label_report_date_und_keine_duplikate(tmp_path):
 
 def test_migration_relabelt_aus_report_date(tmp_path):
     db = tmp_path / "sm.db"
-    con = smart_money.connect(db)  # legt Tabelle inkl. report_date an
+    con = smart_money.connect(db)  # legt Tabelle inkl. report_date an (v48: periode/cusip/accession)
     con.execute(
-        "INSERT INTO smart_money_positions (fonds, quartal, report_date, filing_datum, ticker,"
+        "INSERT INTO smart_money_positions (fonds, periode, report_date, filing_datum, ticker,"
         " shares, wert, anteil_portfolio, aktion, aenderung_pct, positions_gesamt, rotation_pct, geladen_am)"
         " VALUES ('Himalaya Capital Management','06-Q10','2026-06-30','2026-08-15','AAA',"
         " 1,1,0.1,'neu',NULL,1,NULL,'t')")
     con.commit()
     con.close()
     con = smart_money.connect(db)  # Migration beim connect
-    r = con.execute("SELECT quartal FROM smart_money_positions").fetchone()
+    r = con.execute("SELECT periode FROM smart_money_positions").fetchone()
     assert r[0] == "2026-Q2"      # neu beschriftet aus reportDate
 
 
