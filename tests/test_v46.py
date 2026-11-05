@@ -247,7 +247,7 @@ def test_unmapped_einmalig_als_liste(monkeypatch):
                                        errors=errors, unmapped=unmapped)
     assert unmapped == ["222222222"]
     assert errors == []                                        # nicht als Einzelzeilen
-    assert out["222222222"] == "222222222"                     # CUSIP als Schluessel
+    assert "222222222" not in out                              # v48: Miss -> nicht im Ergebnis (ticker NULL in DB)
 
 
 # --------------------------------------------------------------------------
@@ -394,13 +394,14 @@ def test_13d_503_blockiert_lauf_nicht(tmp_path):
 def test_show_fonds(tmp_path, capsys):
     db = tmp_path / "sm.db"
     con = smart_money.connect(db)
-    for q, tickers in (("2026-Q2", ["AAA", "BBB"]), ("2026-Q1", ["AAA"])):
-        for t in tickers:
+    for q, tickers in (("2026-Q2", [("AAA", "111111111"), ("BBB", "222222222")]),
+                       ("2026-Q1", [("AAA", "111111111")])):
+        for t, cusip in tickers:
             con.execute(
-                "INSERT INTO smart_money_positions (fonds, quartal, filing_datum, ticker, shares,"
+                "INSERT INTO smart_money_positions (fonds, periode, filing_datum, cusip, ticker, shares,"
                 " wert, anteil_portfolio, aktion, aenderung_pct, positions_gesamt, rotation_pct, geladen_am)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                ("Starboard Value", q, "2026-08-20", t, 100.0, 1000.0, 0.01, "neu", None, 2,
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("Starboard Value", q, "2026-08-20", cusip, t, 100.0, 1000.0, 0.01, "neu", None, 2,
                  None, "2026-08-20T00:00:00"))
     con.commit()
     smart_money.cmd_show(argparse.Namespace(db=str(db), ticker=None, fonds="Starboard Value"))

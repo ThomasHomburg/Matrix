@@ -94,14 +94,16 @@ CREATE TABLE IF NOT EXISTS decisions (
 CREATE INDEX IF NOT EXISTS idx_decisions_ticker ON decisions (ticker);
 CREATE INDEX IF NOT EXISTS idx_decisions_datum ON decisions (datum);
 
--- v43: Smart Money -- 13F-Positionen je (Fonds, Quartal, Ticker)
+-- v43/v48: Smart Money -- 13F-Positionen; eindeutiger Schluessel (fonds, periode, cusip, accession)
 CREATE TABLE IF NOT EXISTS smart_money_positions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     fonds           TEXT NOT NULL,             -- Fondsname (config smart_money.funds)
-    quartal         TEXT NOT NULL,             -- YYYY-Qn aus reportDate (v47: exklusiv reportDate)
-    report_date     TEXT,                      -- v47: reportDate des Filings (Label-Basis + Migration)
+    periode         TEXT NOT NULL,             -- YYYY-Qn aus reportDate (v48; v47: exklusiv reportDate)
+    report_date     TEXT,                      -- reportDate des Filings (Basis der Periode + Migration)
+    accession       TEXT NOT NULL DEFAULT '',  -- v48: Accession des 13F (13F-HR/A ersetzt Original derselben Periode)
     filing_datum    TEXT,                      -- ISO-Datum des (neuesten) 13F-Filings
-    ticker          TEXT NOT NULL,
+    cusip           TEXT NOT NULL DEFAULT '',  -- v48: CUSIP der Position
+    ticker          TEXT,                      -- gemappt; NULL wenn nicht zuordenbar (v48)
     shares          REAL,
     wert            REAL,                      -- Marktwert USD (infotable: 1000 USD x 1000)
     anteil_portfolio REAL,                     -- wert / Gesamtwert Aktien des Fonds-Quartals
@@ -110,23 +112,24 @@ CREATE TABLE IF NOT EXISTS smart_money_positions (
     positions_gesamt INTEGER,                  -- Anzahl Aktien-Positionen des Fonds im Quartal
     rotation_pct    REAL,                      -- Umgeschichteter Wert / Portfoliowert Vorquartal
     geladen_am      TEXT NOT NULL,
-    UNIQUE (fonds, quartal, ticker)
+    UNIQUE (fonds, periode, cusip, accession)
 );
 CREATE INDEX IF NOT EXISTS idx_smp_ticker ON smart_money_positions (ticker);
-CREATE INDEX IF NOT EXISTS idx_smp_quartal ON smart_money_positions (quartal);
+CREATE INDEX IF NOT EXISTS idx_smp_periode ON smart_money_positions (periode);
+CREATE INDEX IF NOT EXISTS idx_smp_fonds_periode ON smart_money_positions (fonds, periode);
 
 -- v43: Optionen (PUT/CALL) -- getrennt gefuehrt, zaehlen NICHT in Score/Anteil
 CREATE TABLE IF NOT EXISTS smart_money_options (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     fonds       TEXT NOT NULL,
-    quartal     TEXT NOT NULL,
+    periode     TEXT NOT NULL,                 -- v48: wie smart_money_positions
     filing_datum TEXT,
-    ticker      TEXT NOT NULL,                 -- gemappt (GOOGL->GOOG); sonst CUSIP
+    ticker      TEXT,                          -- gemappt (GOOGL->GOOG); NULL wenn nicht zuordenbar (v48)
     put_call    TEXT NOT NULL,                 -- PUT | CALL
     shares      REAL,
     wert        REAL,
     geladen_am  TEXT NOT NULL,
-    UNIQUE (fonds, quartal, ticker, put_call)
+    UNIQUE (fonds, periode, ticker, put_call)
 );
 
 -- v43: Katalysatoren (13D/13D-A der Aktivisten, gewicht 0)
@@ -140,11 +143,11 @@ CREATE TABLE IF NOT EXISTS smart_money_katalysator (
 );
 CREATE INDEX IF NOT EXISTS idx_smcat_ticker ON smart_money_katalysator (ticker);
 
--- v46: dauerhaftes CUSIP->Ticker-Mapping (OpenFIGI); wird nicht erneut abgefragt
+-- v46/v48: dauerhaftes CUSIP->Ticker-Mapping; wird nicht erneut abgefragt
 CREATE TABLE IF NOT EXISTS cusip_map (
     cusip       TEXT PRIMARY KEY,
     ticker      TEXT NOT NULL,
-    quelle      TEXT,                      -- OpenFIGI | manuell
+    quelle      TEXT,                      -- v48: openfigi | name_match | manuell
     geladen_am  TEXT NOT NULL
 );
 

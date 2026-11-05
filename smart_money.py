@@ -1,10 +1,26 @@
-"""v43: Smart Money -- 13F-HR einer Fonds-Liste aus SEC EDGAR (smart_money.py).
+"""v48: Smart Money -- 13F-HR einer Fonds-Liste aus SEC EDGAR (smart_money.py).
+
+v48 (1) Periode: Label "periode" = Jahr-Qn exklusiv aus reportDate
+    (2026-06-30 -> 2026-Q2, 2026-03-31 -> 2026-Q1). Eindeutiger Schluessel
+    (fonds, periode, cusip, accession); 13F-HR/A ersetzt das Original derselben
+    Periode (nur die neueste Fassung bleibt in der DB). Neuer Schalter
+    `fetch --reset`: leert smart_money_positions (cusip_map bleibt) und laedt
+    die letzten 8 Perioden je Fonds neu. Danach Vollstaendigkeitspruefung je
+    Fonds (Perioden, fehlende Perioden, Anzahl Positionen, Warnung bei Luecken)
+    + Mapping-Abdeckung je Fonds (Anteil der Positionen nach Wert mit Ticker).
+v48 (2) Ticker-Zuordnung: CUSIP->Ticker ueber cusip_map (dauerhaft), statisches
+    config-cusip_map, OpenFIGI (max. 5 Auftraege/Anfrage ohne API-Key, bis 100
+    mit OPENFIGI_API_KEY, mind. 2,5 s Pause, Ergebnis dauerhaft in cusip_map,
+    quelle openfigi) und Fallback nameOfIssuer normalisiert gegen die Titel in
+    SEC company_tickers.json (quelle name_match). Nicht zuordenbar -> ticker
+    NULL, cusip bleibt gespeichert. Ziel: >= 95 % der Positionen nach Wert
+    mit Ticker.
 
 Screener-Logik bleibt unveraendert; Modul ist eigenstaendig lauffaehig
 (CSV/SQLite value_tracker.db, Tabellen werden bei Bedarf angelegt).
 
 Aufruf:
-    python smart_money.py fetch [--quarters 8] [--db value_tracker.db]
+    python smart_money.py fetch [--quarters 8] [--reset] [--db value_tracker.db]
     python smart_money.py score TICKER [TICKER ...] [--db ...]
     python smart_money.py score --ranking ranking.csv [--db ...]
     python smart_money.py overlap --ranking ranking.csv --watch ticker_watch_v40.csv
@@ -27,10 +43,12 @@ Aufruf:
     (PUT/CALL) getrennt in smart_money_options, zaehlen NICHT in Score/Anteil.
 
 (3) Tabellen (schema.sql, bei Bedarf automatisch angelegt):
-    smart_money_positions (fonds, quartal, filing_datum, ticker, shares, wert,
-    anteil_portfolio, aktion, aenderung_pct, positions_gesamt, rotation_pct),
+    smart_money_positions (fonds, periode, report_date, accession, filing_datum,
+    cusip, ticker, shares, wert, anteil_portfolio, aktion, aenderung_pct,
+    positions_gesamt, rotation_pct; UNIQUE (fonds, periode, cusip, accession)),
     smart_money_rationale (nur Import rationale_import.csv, Pflicht quelle_url),
-    smart_money_options, smart_money_katalysator (13D/13D-A der Aktivisten).
+    smart_money_options, smart_money_katalysator (13D/13D-A der Aktivisten),
+    cusip_map (dauerhaftes CUSIP->Ticker-Mapping, quelle openfigi|name_match).
 
 (4) smart_money_score(ticker) 1..4 (config smart_money.rules):
     1 = kein Fonds mit Gewicht > 0; 2 = ein Fonds neu/erhoeht, Anteil < 2 %;
@@ -321,6 +339,41 @@ def load_company_tickers(http: SecHttp) -> dict[str, str]:
         return {}
 
 
+# v48: Tokens, die beim Normalisieren von Firmennamen (nameOfIssuer vs. Titel in
+# company_tickers.json) ignoriert werden
+_ISSUER_TOKENS_IGNORE = frozenset({
+    "THE", "INC", "CORP", "CORPORATION", "CO", "COMPANY", "LTD", "LIMITED",
+    "LLC", "LLP", "LP", "PLC", "SA", "NV", "AG", "SE", "CLASS", "COMMON",
+    "STOCK", "SHARES", "ADR", "TR", "TRUST", "HOLDING", "HOLDINGS", "GROUP",
+})
+
+
+def normalize_issuer_name(name: str) -> str:
+    """v48: Firmenname normalisieren fuer den name_match-Fallback:
+    Grossbuchstaben, Nicht-Alphanumerisch -> Leerzeichen, Suffix-Tokens
+    (INC, CORP, AG, ...) entfernt. 'Apple Inc.' -> 'APPLE'."""
+    s = re.sub(r"[^A-Z0-9]+", " ", (name or "").upper())
+    return " ".join(t for t in s.split() if len(t) > 1 and t not in _ISSUER_TOKENS_IGNORE)
+
+
+def load_company_titles(http: SecHttp) -> dict[str, str]:
+    """v48: SEC company_tickers.json -> {normalisierter Titel: TICKER}.
+    Basis des nameOfIssuer-Fallbacks fuer US-Aktien ohne CUSIP-Mapping."""
+    try:
+        raw = http.get(f"{_sec_base()}/files/company_tickers.json")
+        data = json.loads(raw.decode("utf-8"))
+        out: dict[str, str] = {}
+        for v in data.values():
+            t = normalize_issuer_name(str(v.get("title", "")))
+            tk = str(v.get("ticker", "")).upper()
+            if t and tk and t not in out:
+                out[t] = tk
+        return out
+    except Exception as exc:
+        logger.warning("company_tickers.json (Titel) nicht ladbar: %s", exc)
+        return {}
+
+
 OPENFIGI_MIN_GAP_S = 2.5  # v46: max 25 OpenFIGI-Anfragen/Minute (mindestens 2,5 s Pause)
 
 
@@ -355,21 +408,28 @@ def _openfigi_post(http: SecHttp, url: str, payload: bytes) -> bytes:
 
 def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
                      errors: list | None = None, con: sqlite3.Connection | None = None,
-                     unmapped: list | None = None) -> dict[str, str]:
-    """v46: CUSIP -> Ticker. Reihenfolge: Tabelle cusip_map (dauerhaft in der DB,
+                     unmapped: list | None = None,
+                     names: dict[str, str] | None = None,
+                     title_map: dict[str, str] | None = None) -> dict[str, str]:
+    """v48: CUSIP -> Ticker. Reihenfolge: Tabelle cusip_map (dauerhaft in der DB,
     wird nicht erneut abgefragt), statisches cusip_map (config/Fixtures), dann
     OpenFIGI POST (cusip_map_url) in Chunks -- 5 ohne API-Key, 100 mit
     OPENFIGI_API_KEY; mindestens 2,5 s Pause (max 25/Minute), 429 -> Retry.
-    Neu gemappte CUSIPs landen dauerhaft in cusip_map. Nicht zuordenbare CUSIPs
-    werden einmalig gesammelt (`unmapped`, bzw. eine Fehlerlog-Zeile), nicht als
-    Einzelzeilen."""
+    Rest: Fallback ueber nameOfIssuer (normalisiert) gegen die Titel in SEC
+    company_tickers.json (`title_map`, siehe load_company_titles). Neu gemappte
+    CUSIPs landen dauerhaft in cusip_map mit quelle 'openfigi' bzw.
+    'name_match'. Nicht zuordenbare CUSIPs fehlen im Ergebnis (ticker NULL in
+    smart_money_positions) und werden einmalig gesammelt (`unmapped`, bzw. eine
+    Fehlerlog-Zeile), nicht als Einzelzeilen."""
     out: dict[str, str] = {}
+    quelle: dict[str, str] = {}
     cusips = [c for c in dict.fromkeys(cusips) if c]
     if con is not None:
         for c in cusips:
-            row = con.execute("SELECT ticker FROM cusip_map WHERE cusip=?", (c,)).fetchone()
+            row = con.execute("SELECT ticker, quelle FROM cusip_map WHERE cusip=?", (c,)).fetchone()
             if row and row[0]:
                 out[c] = str(row[0]).upper()
+                quelle[c] = str(row[1] or "manuell")
     static_map = {str(k): str(v).upper()
                   for k, v in (cfg.get("smart_money", {}).get("cusip_map") or {}).items()}
     rest = []
@@ -378,6 +438,7 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
             continue
         if c in static_map:
             out[c] = static_map[c]
+            quelle[c] = "manuell"
         else:
             rest.append(c)
     if rest:
@@ -400,18 +461,26 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
                         t = (item or {}).get("ticker")
                         if t:
                             out[c] = str(t).upper()
+                            quelle[c] = "openfigi"
                 except Exception as exc:
                     logger.warning("OpenFIGI-Mapping fehlgeschlagen (Chunk ab Index %d): %s", i, exc)
+    # v48: Fallback nameOfIssuer (normalisiert) gegen Titel aus company_tickers.json
+    if title_map:
+        for c in rest:
+            if c in out:
+                continue
+            t = title_map.get(normalize_issuer_name((names or {}).get(c, "")))
+            if t:
+                out[c] = t.upper()
+                quelle[c] = "name_match"
     miss = [c for c in rest if c not in out]
-    for c in miss:
-        out[c] = c  # CUSIP als Schluessel, damit nichts verloren geht
     if con is not None and rest:
         now = datetime.now().isoformat(timespec="seconds")
         for c in rest:
-            if c in out and out[c] != c:
+            if c in out:
                 con.execute(
                     "INSERT OR REPLACE INTO cusip_map (cusip, ticker, quelle, geladen_am) "
-                    "VALUES (?,?,?,?)", (c, out[c], "OpenFIGI", now))
+                    "VALUES (?,?,?,?)", (c, out[c], quelle.get(c, "openfigi"), now))
         con.commit()
     if miss:
         if unmapped is not None:
@@ -739,12 +808,13 @@ def compare_quarters(prev: dict[str, dict], cur: dict[str, dict]) -> list[dict]:
             aktion, aend = "reduziert", h["shares"] / ps - 1.0
         else:
             aktion, aend = "unveraendert", 0.0
-        rows.append({"cusip": cusip, "aktion": aktion, "aenderung_pct": aend,
+        # v48: echte CUSIP mitfuehren (Schluessel von cur ist ggf. gemergter Ticker)
+        rows.append({"cusip": h.get("cusip") or cusip, "aktion": aktion, "aenderung_pct": aend,
                      "shares": h["shares"], "wert": h.get("value", h.get("wert", float("nan"))),
                      "name": h.get("name", "")})
     for cusip, p in prev.items():
         if cusip not in cur:
-            rows.append({"cusip": cusip, "aktion": "verkauft", "aenderung_pct": -1.0,
+            rows.append({"cusip": p.get("cusip") or cusip, "aktion": "verkauft", "aenderung_pct": -1.0,
                          "shares": 0.0, "wert": 0.0, "name": p.get("name", "")})
     return rows
 
@@ -754,27 +824,27 @@ def compare_quarters(prev: dict[str, dict], cur: dict[str, dict]) -> list[dict]:
 # --------------------------------------------------------------------------
 
 def _migrate_positions(con: sqlite3.Connection) -> None:
-    """v47: Migration smart_money_positions -- Spalte report_date ergaenzen und
-    bestehende Zeilen aus der gespeicherten reportDate neu beschriften
-    (quartal = quartal_of(report_date)). Fehlt die Spalte ganz (alte DB), sind die
-    Zeilen nicht neu beschriftbar -> sie werden entfernt und beim naechsten fetch
-    neu geladen."""
+    """v48: Migration smart_money_positions. Tabelle muss die v48-Spalten
+    (periode, cusip, accession) haben; alte Form (quartal-Spalte, UNIQUE
+    fonds/quartal/ticker) wird gedroppt und aus schema.sql neu aufgebaut --
+    die Positionen werden per `fetch --reset` neu geladen (cusip_map bleibt).
+    Danach Relabel: periode exklusiv aus der gespeicherten report_date."""
     cols = {r[1] for r in con.execute("PRAGMA table_info(smart_money_positions)")}
     if not cols:
         return
-    if "report_date" not in cols:
-        con.execute("ALTER TABLE smart_money_positions ADD COLUMN report_date TEXT")
-        con.execute("DELETE FROM smart_money_positions")  # ohne reportDate: neu laden
+    if not {"periode", "cusip", "accession"} <= cols:
+        con.execute("DROP TABLE smart_money_positions")
+        con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         con.commit()
         return
     rows = con.execute(
-        "SELECT rowid, report_date, quartal FROM smart_money_positions "
+        "SELECT rowid, report_date, periode FROM smart_money_positions "
         "WHERE report_date IS NOT NULL AND report_date != ''").fetchall()
     changed = False
-    for rowid, rd, q in rows:
-        nq = quartal_of(rd)
-        if nq and nq != q:
-            con.execute("UPDATE smart_money_positions SET quartal=? WHERE rowid=?", (nq, rowid))
+    for rowid, rd, p in rows:
+        np = quartal_of(rd)
+        if np and np != p:
+            con.execute("UPDATE smart_money_positions SET periode=? WHERE rowid=?", (np, rowid))
             changed = True
     if changed:
         con.commit()
@@ -782,36 +852,51 @@ def _migrate_positions(con: sqlite3.Connection) -> None:
 
 def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
+    # v48: alte Tabellenform (ohne periode/cusip/accession) vor dem Schema-Lauf
+    # droppen -- sonst schlaegt CREATE INDEX auf der fehlenden Spalte fehl
+    exists = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='smart_money_positions'"
+    ).fetchone()
+    if exists:
+        cols = {r[1] for r in con.execute("PRAGMA table_info(smart_money_positions)")}
+        if not {"periode", "cusip", "accession"} <= cols:
+            con.execute("DROP TABLE smart_money_positions")
     con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     con.commit()
     _migrate_positions(con)
     return con
 
 
-def store_quarter(con: sqlite3.Connection, fonds: str, quartal: str, filing_datum: str,
+def store_quarter(con: sqlite3.Connection, fonds: str, periode: str, filing_datum: str,
                   rows: list[dict], cusip2ticker: dict[str, str], portfolio_total: float,
                   options: list[dict], cfg: dict, prev_total: float | None,
-                  by_ticker_keys: list | None = None, report_date: str = "") -> int:
-    """Schreibt ein (Fonds, Quartal) in smart_money_positions + smart_money_options.
-    v47: report_date (reportDate des Filings) wird mitgespeichert -- Basis des
-    Quartalslabels und der Migration."""
+                  by_ticker_keys: list | None = None, report_date: str = "",
+                  accession: str = "") -> int:
+    """Schreibt ein (Fonds, Periode) in smart_money_positions + smart_money_options.
+    v48: eindeutiger Schluessel (fonds, periode, cusip, accession); eine andere
+    Accession derselben Periode (z. B. 13F-HR/A nach 13F-HR) wird zuerst
+    entfernt -- nur die neueste Fassung zaehlt. ticker bleibt NULL, wenn der
+    CUSIP nicht zuordenbar ist (cusip bleibt gespeichert)."""
     n = 0
+    con.execute("DELETE FROM smart_money_positions WHERE fonds=? AND periode=? AND accession<>?",
+                (fonds, periode, accession))
     for r in rows:
-        ticker = merge_tickers(cusip2ticker.get(r["cusip"], r["cusip"]), cfg)
+        raw = cusip2ticker.get(r["cusip"])
+        ticker = merge_tickers(raw, cfg) if raw else None
         anteil = (r["wert"] / portfolio_total) if portfolio_total > 0 and r["wert"] == r["wert"] else None
         con.execute(
             """INSERT INTO smart_money_positions
-               (fonds, quartal, report_date, filing_datum, ticker, shares, wert, anteil_portfolio,
-                aktion, aenderung_pct, positions_gesamt, rotation_pct, geladen_am)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(fonds, quartal, ticker) DO UPDATE SET
+               (fonds, periode, report_date, accession, filing_datum, cusip, ticker, shares, wert,
+                anteil_portfolio, aktion, aenderung_pct, positions_gesamt, rotation_pct, geladen_am)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(fonds, periode, cusip, accession) DO UPDATE SET
                  report_date=excluded.report_date,
-                 filing_datum=excluded.filing_datum, shares=excluded.shares, wert=excluded.wert,
-                 anteil_portfolio=excluded.anteil_portfolio, aktion=excluded.aktion,
+                 filing_datum=excluded.filing_datum, ticker=excluded.ticker, shares=excluded.shares,
+                 wert=excluded.wert, anteil_portfolio=excluded.anteil_portfolio, aktion=excluded.aktion,
                  aenderung_pct=excluded.aenderung_pct, positions_gesamt=excluded.positions_gesamt,
                  rotation_pct=excluded.rotation_pct, geladen_am=excluded.geladen_am""",
-            (fonds, quartal, report_date, filing_datum, ticker, r["shares"], r["wert"], anteil,
-             r["aktion"], r["aenderung_pct"], len(by_ticker_keys), None,
+            (fonds, periode, report_date, accession, filing_datum, r["cusip"], ticker, r["shares"],
+             r["wert"], anteil, r["aktion"], r["aenderung_pct"], len(by_ticker_keys), None,
              datetime.now().isoformat(timespec="seconds")))
         n += 1
     # rotation_pct = Wert der veraenderten Positionen / Portfoliowert Vorquartal
@@ -819,26 +904,84 @@ def store_quarter(con: sqlite3.Connection, fonds: str, quartal: str, filing_datu
                 and r["wert"] == r["wert"])
     rot = (moved / prev_total) if prev_total and prev_total > 0 else None
     if rot is not None:
-        con.execute("UPDATE smart_money_positions SET rotation_pct=? WHERE fonds=? AND quartal=?",
-                    (rot, fonds, quartal))
+        con.execute("UPDATE smart_money_positions SET rotation_pct=? WHERE fonds=? AND periode=?",
+                    (rot, fonds, periode))
+    con.execute("DELETE FROM smart_money_options WHERE fonds=? AND periode=?", (fonds, periode))
     for o in options:
-        ticker = merge_tickers(cusip2ticker.get(o["cusip"], o["cusip"]), cfg)
+        raw = cusip2ticker.get(o["cusip"])
+        ticker = merge_tickers(raw, cfg) if raw else None
         con.execute(
-            """INSERT INTO smart_money_options (fonds, quartal, filing_datum, ticker, put_call, shares, wert, geladen_am)
+            """INSERT INTO smart_money_options (fonds, periode, filing_datum, ticker, put_call, shares, wert, geladen_am)
                VALUES (?,?,?,?,?,?,?,?)
-               ON CONFLICT(fonds, quartal, ticker, put_call) DO UPDATE SET
+               ON CONFLICT(fonds, periode, ticker, put_call) DO UPDATE SET
                  filing_datum=excluded.filing_datum, shares=excluded.shares, wert=excluded.wert,
                  geladen_am=excluded.geladen_am""",
-            (fonds, quartal, filing_datum, ticker, o["put_call"], o["shares"], o.get("value", o.get("wert")),
+            (fonds, periode, filing_datum, ticker, o["put_call"], o["shares"], o.get("value", o.get("wert")),
              datetime.now().isoformat(timespec="seconds")))
     con.commit()
     return n
 
 
+def periode_add(periode: str, k: int) -> str:
+    """v48: '2026-Q2' + k Quartale (k auch negativ). '2026-Q1' - 1 -> '2025-Q4'."""
+    y, q = periode.split("-Q")
+    t = int(y) * 4 + int(q) - 1 + k
+    return f"{t // 4}-Q{t % 4 + 1}"
+
+
+def expected_periodes(newest: str, n: int) -> list[str]:
+    """v48: n aufeinanderfolgende Perioden endend bei `newest`, aufsteigend."""
+    if not newest:
+        return []
+    return [periode_add(newest, -i) for i in range(n - 1, -1, -1)]
+
+
+def completeness_check(con: sqlite3.Connection, fonds: str, newest_periode: str,
+                       quarters: int = 8) -> dict:
+    """v48: Vollstaendigkeitspruefung je Fonds -- vorhandene Perioden, fehlende
+    Perioden (Luecken in den letzten `quarters` Perioden ab newest_periode),
+    Anzahl Positionen je Periode, Warnung bei Luecken."""
+    rows = con.execute(
+        "SELECT periode, COUNT(*) AS n FROM smart_money_positions WHERE fonds=? "
+        "GROUP BY periode ORDER BY periode", (fonds,)).fetchall()
+    periodes = [r[0] for r in rows]
+    counts = {r[0]: r[1] for r in rows}
+    erwartet = expected_periodes(newest_periode, quarters)
+    fehlend = [p for p in erwartet if p not in periodes]
+    return {"fonds": fonds, "perioden": periodes, "positionen": counts,
+            "erwartet": erwartet, "fehlend": fehlend, "warnung": bool(fehlend)}
+
+
+def mapping_coverage(con: sqlite3.Connection, fonds: str | None = None) -> list[dict]:
+    """v48: Mapping-Abdeckung je Fonds -- Anteil der Positionen NACH WERT mit
+    Ticker (ticker IS NOT NULL). Ziel: >= 95 %."""
+    sql = ("SELECT fonds, SUM(wert) AS gesamt, "
+           "SUM(CASE WHEN ticker IS NOT NULL THEN wert ELSE 0 END) AS mit_ticker "
+           "FROM smart_money_positions")
+    args: tuple = ()
+    if fonds:
+        sql += " WHERE fonds=?"
+        args = (fonds,)
+    sql += " GROUP BY fonds ORDER BY fonds"
+    out = []
+    for f, gesamt, mit in con.execute(sql, args).fetchall():
+        gesamt = gesamt or 0.0
+        mit = mit or 0.0
+        out.append({"fonds": f, "gesamt_wert": gesamt, "mit_ticker_wert": mit,
+                    "anteil": (mit / gesamt) if gesamt > 0 else 0.0})
+    return out
+
+
 def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
-              fetcher=None, report: list | None = None, sleeper=None) -> list[dict]:
-    """Laedt die letzten `quarters` Quartale je Fonds (13F-HR, A-Fassung gewinnt),
+              fetcher=None, report: list | None = None, sleeper=None,
+              reset: bool = False) -> list[dict]:
+    """Laedt die letzten `quarters` Perioden je Fonds (13F-HR, A-Fassung gewinnt),
     speichert Positionen/Optionen, sammelt 13D-Katalysatoren der Aktivisten.
+
+    v48: `reset=True` leert smart_money_positions vorab (cusip_map bleibt) und
+    laedt die letzten Perioden neu. Im `report` je Fonds zusaetzlich
+    "completeness" (Vollstaendigkeitspruefung) und "mapping" (Abdeckung nach
+    Wert mit Ticker).
 
     Rueckgabe: Fehlerliste [{fonds, error}]. `report` (optional) bekommt die
     CIK-Aufloesung + Filer-Status [{name, cik, filer_status}] -- v46 ergaenzt um
@@ -857,10 +1000,17 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                    tuple(_waits or [2, 5, 10]), int(r.get("versuche", 3)),
                    fetcher=fetcher, errors=errors, sleeper=sleeper or time.sleep)
     con = connect(db_path)
+    if reset:
+        # v48: fetch --reset -- Positionen neu laden, cusip_map bleibt erhalten
+        con.execute("DELETE FROM smart_money_positions")
+        con.commit()
+        logger.info("smart_money: --reset -- smart_money_positions geleert (cusip_map bleibt)")
     unmapped: list[str] = []  # v46: nicht zuordenbare CUSIPs -- einmal am Ende als Liste
     ciks = resolve_all_ciks(cfg, http)
     if report is not None:
         report.extend(ciks)
+    # v48: Titel aus company_tickers.json fuer den nameOfIssuer-Fallback (einmalig)
+    title_map = load_company_titles(http)
     funds = {f["name"]: f for f in sm.get("funds", [])}
     for entry in ciks:
         name, cik = entry["name"], entry["cik"]
@@ -879,7 +1029,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                 errors.append({"fonds": name, "error": "keine 13F-HR gefunden"})
                 continue
             entry["filings"] = filings[-8:]  # v46: letzte 8 Filings je Fonds im Bericht
-            qdata: list[tuple[str, str, list, list]] = []
+            qdata: list[tuple[str, str, str, list, list]] = []
             for f in filings:
                 http.accession = f["accession"]  # v46: Accession im HTTP-Fehlerlog
                 try:
@@ -892,18 +1042,21 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                     continue
                 # v47: Label-Datum AUSSCHLIESSLICH reportDate (submissions bevorzugt,
                 # Fallback periodOfReport aus dem XML); filing_date nur fuer Sortierung
-                qdata.append((f["report_date"] or rd, f["filing_date"], holdings, options))
+                qdata.append((f["report_date"] or rd, f["filing_date"], f["accession"], holdings, options))
             qdata.sort(key=lambda x: x[0] or x[1])
             qdata = qdata[-nq:]
-            # CUSIP->Ticker fuer ALLE Quartale vorab (damit GOOG/GOOGL-Merging
+            # CUSIP->Ticker fuer ALLE Perioden vorab (damit GOOG/GOOGL-Merging
             # VOR dem Vorquartals-Vergleich passiert: gleiche Aktie je Fonds)
-            all_cusips = list({h["cusip"] for _rd, _fd, hl, _op in qdata for h in hl}
-                              | {o["cusip"] for _rd, _fd, _hl, op in qdata for o in op})
-            c2t = cusip_to_tickers(all_cusips, http, cfg, errors=errors, con=con, unmapped=unmapped)
+            all_cusips = list({h["cusip"] for _rd, _fd, _ac, hl, _op in qdata for h in hl}
+                              | {o["cusip"] for _rd, _fd, _ac, _hl, op in qdata for o in op})
+            all_names = {h["cusip"]: h.get("name", "") for _rd, _fd, _ac, hl, op in qdata
+                         for h in list(hl) + list(op)}
+            c2t = cusip_to_tickers(all_cusips, http, cfg, errors=errors, con=con, unmapped=unmapped,
+                                   names=all_names, title_map=title_map)
             prev: dict[str, dict] = {}
             prev_total = None
-            for report_date, filing_date, holdings, options in qdata:
-                q = quartal_of(report_date)  # v47: Label exklusiv aus reportDate
+            for report_date, filing_date, accession, holdings, options in qdata:
+                q = quartal_of(report_date)  # v48: Periode = Jahr-Qn exklusiv aus reportDate
                 # nach Ticker mergen (GOOGL->GOOG): shares + wert summieren
                 by_ticker: dict[str, dict] = {}
                 for h in holdings:
@@ -917,10 +1070,17 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                 rows = compare_quarters(prev, by_ticker)
                 total = sum(h["value"] for h in by_ticker.values() if h["value"] == h["value"])
                 n = store_quarter(con, name, q, filing_date, rows, c2t, total, options, cfg, prev_total,
-                                  by_ticker_keys=list(by_ticker), report_date=report_date)
+                                  by_ticker_keys=list(by_ticker), report_date=report_date,
+                                  accession=accession)
                 logger.info("smart_money: %s %s -> %d Positionen (%d Optionen)", name, q, n, len(options))
                 prev = by_ticker
                 prev_total = total
+            # v48: Vollstaendigkeitspruefung + Mapping-Abdeckung je Fonds (ab newester Periode)
+            newest = max((quartal_of(f["report_date"] or "") for f in filings), default="")
+            entry["completeness"] = completeness_check(con, name, newest, nq)
+            cov = mapping_coverage(con, fonds=name)
+            entry["mapping"] = cov[0] if cov else {"fonds": name, "gesamt_wert": 0.0,
+                                                   "mit_ticker_wert": 0.0, "anteil": 0.0}
             # Aktivist: 13D/13D-A als Katalysator sammeln (gewicht 0)
             if fcfg.get("typ") == "aktivist" or float(gew) == 0.0:
                 try:
@@ -963,7 +1123,7 @@ def _fonds_gewicht(cfg: dict, fonds: str) -> float:
 def _rows_for(con: sqlite3.Connection, ticker: str) -> list[dict]:
     con.row_factory = sqlite3.Row
     return [dict(r) for r in con.execute(
-        "SELECT * FROM smart_money_positions WHERE ticker=? ORDER BY quartal, fonds",
+        "SELECT * FROM smart_money_positions WHERE ticker=? ORDER BY periode, fonds",
         (ticker.upper(),))]
 
 
@@ -1000,9 +1160,9 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
     if not rows:
         return empty
 
-    quarters = sorted({r["quartal"] for r in rows})
+    quarters = sorted({r["periode"] for r in rows})
     last_q = quarters[-1]
-    last = [r for r in rows if r["quartal"] == last_q]
+    last = [r for r in rows if r["periode"] == last_q]
 
     def _gew(fonds: str) -> float:
         return _fonds_gewicht(cfg, fonds)
@@ -1042,7 +1202,7 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
     # Score 4: cond3 in zwei aufeinanderfolgenden Quartalen + Rationale
     if zwei_q and rat and score >= 3 and len(quarters) >= 2:
         prev_q = quarters[-2]
-        prev = [r for r in rows if r["quartal"] == prev_q]
+        prev = [r for r in rows if r["periode"] == prev_q]
         prev_kaeufer = {r["fonds"] for r in prev
                         if r["aktion"] in ("neu", "erhoeht") and _gew(r["fonds"]) > 0}
         prev_gew = sum(_gew(f) for f in prev_kaeufer)
@@ -1119,7 +1279,7 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
     con = connect(db_path)
     con.row_factory = sqlite3.Row
     aktive = {r["ticker"] for r in con.execute(
-        "SELECT DISTINCT ticker FROM smart_money_positions")}
+        "SELECT DISTINCT ticker FROM smart_money_positions WHERE ticker IS NOT NULL")}
     tickers = list(dict.fromkeys(watch + sorted(aktive)))
     out = []
     for t in tickers:
@@ -1154,11 +1314,10 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
 # CLI
 # --------------------------------------------------------------------------
 
-def cmd_fetch(args) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    cfg = load_config()
-    report: list[dict] = []
-    errors = fetch_all(cfg, quarters=args.quarters, db_path=Path(args.db), report=report)
+def print_fetch_report(report: list[dict], errors: list[dict]) -> None:
+    """v48: Ausgabe des fetch-Laufs: CIK/Filer-Status, Filings je Fonds, danach
+    Vollstaendigkeitspruefung (Perioden, fehlende, Positionen, Warnung) und
+    Mapping-Abdeckung je Fonds (Anteil nach Wert mit Ticker), dann Fehlerlog."""
     print("\n=== CIK-Aufloesung + Filer-Status (v44: config -> Firmensuche -> manuell) ===")
     for e in report:
         print(f"  {e['name']:<38} cik={e['cik'] or '-':<12} {e['filer_status']}"
@@ -1168,9 +1327,22 @@ def cmd_fetch(args) -> None:
             print(f"      Treffer: cik={t['cik']} name={t['name']!r} letztes 13F-HR={t['last_13f_hr']}")
         # v46: letzte 8 Filings je Fonds mit Label (aus reportDate), form, reportDate, filingDate, accession
         for f in (e.get("filings") or [])[-8:]:
-            label = quartal_of(f["report_date"])  # v47: Label exklusiv aus reportDate
+            label = quartal_of(f["report_date"])  # v48: Periode exklusiv aus reportDate
             print(f"      Filing: {label:<9} {f['form']:<9} report={f['report_date'] or '-'}"
                   f" filing={f['filing_date'] or '-'} acc={f['accession']}")
+        # v48: Vollstaendigkeitspruefung je Fonds (Perioden, fehlende, Positionen, Warnung)
+        c = e.get("completeness") or {}
+        if c:
+            pos = ", ".join(f"{p}={n}" for p, n in sorted(c.get("positionen", {}).items()))
+            fehl = ", ".join(c.get("fehlend") or []) or "-"
+            warn = " WARNUNG: Luecken!" if c.get("warnung") else ""
+            print(f"      Perioden: {', '.join(c.get('perioden') or []) or '-'}"
+                  f" | fehlend: {fehl} | Positionen: {pos or '-'}{warn}")
+        # v48: Mapping-Abdeckung je Fonds (Anteil der Positionen nach Wert mit Ticker)
+        m = e.get("mapping") or {}
+        if m:
+            print(f"      Mapping: {m.get('anteil', 0.0):.1%} nach Wert mit Ticker"
+                  f" ({m.get('mit_ticker_wert', 0.0):,.0f} / {m.get('gesamt_wert', 0.0):,.0f} USD)")
     if errors:
         print(f"\nFehlerlog ({len(errors)}):")
         for e in errors:
@@ -1179,6 +1351,15 @@ def cmd_fetch(args) -> None:
             print(f"  {label}{acc}: {e['error'][:120]}")
     else:
         print("\nKeine Fehler -- alle Fonds aktualisiert.")
+
+
+def cmd_fetch(args) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    cfg = load_config()
+    report: list[dict] = []
+    errors = fetch_all(cfg, quarters=args.quarters, db_path=Path(args.db), report=report,
+                       reset=bool(getattr(args, "reset", False)))
+    print_fetch_report(report, errors)
 
 
 def cmd_score(args) -> None:
@@ -1252,23 +1433,23 @@ def cmd_show(args) -> None:
     con = connect(Path(args.db))
     con.row_factory = sqlite3.Row
     if args.fonds:
-        # v46: Perioden + Anzahl der Positionen je Quartal eines Fonds
+        # v48: Perioden + Anzahl der Positionen je Periode eines Fonds
         rows = con.execute(
-            "SELECT quartal, COUNT(*) AS n, MAX(filing_datum) AS filing_datum "
-            "FROM smart_money_positions WHERE fonds=? GROUP BY quartal ORDER BY quartal DESC",
+            "SELECT periode, COUNT(*) AS n, MAX(filing_datum) AS filing_datum "
+            "FROM smart_money_positions WHERE fonds=? GROUP BY periode ORDER BY periode DESC",
             (args.fonds,)).fetchall()
         print(f"=== smart_money_positions fonds={args.fonds} ({len(rows)} Perioden) ===")
         for r in rows:
-            print(f"{r['quartal']}  positionen={r['n']}  filing={r['filing_datum'] or '-'}")
+            print(f"{r['periode']}  positionen={r['n']}  filing={r['filing_datum'] or '-'}")
         return
     if not args.ticker:
         raise SystemExit("show: ticker oder --fonds angeben")
     rows = con.execute(
-        "SELECT * FROM smart_money_positions WHERE ticker=? ORDER BY quartal DESC, fonds",
+        "SELECT * FROM smart_money_positions WHERE ticker=? ORDER BY periode DESC, fonds",
         (args.ticker.upper(),)).fetchall()
     print(f"=== smart_money_positions {args.ticker} ({len(rows)}) ===")
     for r in rows:
-        print(f"{r['quartal']} {r['fonds']:<30} {r['aktion']:<14} shares={r['shares'] or 0:>12,.0f} "
+        print(f"{r['periode']} {r['fonds']:<30} {r['aktion']:<14} shares={r['shares'] or 0:>12,.0f} "
               f"anteil={r['anteil_portfolio'] or 0:.2%} aend="
               f"{r['aenderung_pct'] if r['aenderung_pct'] is not None else float('nan'):.1%} filing={r['filing_datum']}")
 
@@ -1277,8 +1458,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Smart Money: 13F-HR der Fonds-Liste (SEC EDGAR)")
     p.add_argument("--db", default=str(DB_PATH), help="SQLite-Datei (Default: value_tracker.db)")
     sub = p.add_subparsers(dest="cmd", required=True)
-    p_f = sub.add_parser("fetch", help="13F-HR laden (letzte N Quartale je Fonds)")
+    p_f = sub.add_parser("fetch", help="13F-HR laden (letzte N Perioden je Fonds)")
     p_f.add_argument("--quarters", type=int, default=None, help="Default: config smart_money.quarters (8)")
+    p_f.add_argument("--reset", action="store_true",
+                     help="v48: smart_money_positions leeren (cusip_map bleibt) und die letzten "
+                          "Perioden je Fonds neu laden")
     p_f.set_defaults(func=cmd_fetch)
     p_s = sub.add_parser("score", help="smart_money_score je Ticker (oder --ranking CSV)")
     p_s.add_argument("tickers", nargs="*")
