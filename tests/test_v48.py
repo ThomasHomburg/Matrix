@@ -94,7 +94,7 @@ def _make_fetcher(entries, holdings_by_acc, openfigi=False):
         if "openfigi" in url:
             if not openfigi:
                 raise ValueError(url)
-            return json.dumps([{"ticker": "AAA"}]).encode()
+            return json.dumps([{"data": [{"ticker": "AAA", "exchCode": "US"}]}]).encode()  # v49 (4a): echte Struktur
         if url.endswith("/index.json"):
             return _index_json(["primary_doc.xml", "infotable.xml"])
         if url.endswith("infotable.xml"):
@@ -306,7 +306,7 @@ def test_mapping_batch_5_ohne_api_key(monkeypatch):
     def fetcher(url: str) -> bytes:
         calls.append(url)
         n = len(calls)
-        return json.dumps([{"ticker": f"T{n}_{i}"} for i in range(5)]).encode()
+        return json.dumps([{"data": [{"ticker": f"T{n}_{i}", "exchCode": "US"}]} for i in range(5)]).encode()
 
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher, sleeper=lambda s: None)
     cusips = [f"C{i:09d}" for i in range(12)]
@@ -323,7 +323,7 @@ def test_mapping_batch_100_mit_api_key(monkeypatch):
 
     def fetcher(url: str) -> bytes:
         calls.append(url)
-        return json.dumps([{"ticker": f"T{i}"} for i in range(100)]).encode()
+        return json.dumps([{"data": [{"ticker": f"T{i}", "exchCode": "US"}]} for i in range(100)]).encode()
 
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher, sleeper=lambda s: None)
     out = smart_money.cusip_to_tickers([f"C{i:09d}" for i in range(23)], http, cfg)
@@ -335,7 +335,7 @@ def test_openfigi_ergebnis_dauerhaft_in_cusip_map_quelle_openfigi(monkeypatch):
     cfg = _openfigi_cfg(monkeypatch)
 
     def fetcher(url: str) -> bytes:
-        return json.dumps([{"ticker": "MSFT"}]).encode()
+        return json.dumps([{"data": [{"ticker": "MSFT", "exchCode": "US"}]}]).encode()
 
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher, sleeper=lambda s: None)
     con = smart_money.connect(":memory:")

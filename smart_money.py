@@ -489,7 +489,17 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
                     raw = _openfigi_post(http, url, payload)
                     data = json.loads(raw.decode("utf-8"))
                     for item, c in zip(data, chunk):
-                        t = (item or {}).get("ticker")
+                        # v49 (4a): OpenFIGI antwortet je Eingabe mit {"data": [eintrag, ...]}
+                        # (Liste von Boersen-Eintraegen mit figi/ticker/exchCode/securityType)
+                        # oder {"error": "..."} -- NICHT mit {"ticker": ...}. Gewaehlt wird der
+                        # US-Eintrag (exchCode "US" = US-Composite); ohne Filter wuerden z. B.
+                        # deutsche/andere Listing-Ticker gewinnen (MCO: DUT, Stuttgart, GR,
+                        # steht in data oft VOR dem US-Eintrag).
+                        if not isinstance(item, dict) or item.get("error"):
+                            continue
+                        eintrag = next((e for e in item.get("data") or []
+                                        if isinstance(e, dict) and e.get("exchCode") == "US"), None)
+                        t = eintrag.get("ticker") if eintrag else None
                         if t:
                             out[c] = str(t).upper()
                             quelle[c] = "openfigi"
