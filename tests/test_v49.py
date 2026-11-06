@@ -279,7 +279,8 @@ def test_overlap_bricht_bei_stale_ab_und_force(tmp_path):
     watch.write_text("ticker\nAAA\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="Vollstaendigkeitsschutz"):
         smart_money.overlap(str(ranking), str(watch), cfg, db_path=db)
-    rows = smart_money.overlap(str(ranking), str(watch), cfg, db_path=db, force=True)
+    rows = smart_money.overlap(str(ranking), str(watch), cfg, db_path=db,
+                               out_path=str(tmp_path / "overlap.csv"), force=True)
     assert [r["ticker"] for r in rows] == ["AAA"]
 
 
