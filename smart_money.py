@@ -17,6 +17,11 @@ v49 (3) Vollstaendigkeitsschutz: nach fetch je Fonds Perioden + Positionszahl
     Periode eines Fonds aelter als 140 Tage ist oder in den letzten 4 Perioden
     eine fehlt (--force ueberstimmt). Die Ausgabe nennt je Fonds die Periode,
     die in die Berechnung einging.
+v49 (3b) --force: score/overlap [--force] uebersteuert ausschliesslich diesen Abbruch
+    (Schema-Guard/User-Agent-Pruefung schlagen weiterhin durch). Die Abbruchmeldung
+    nennt je blockiertem Fonds Periode + Grund und den Ausweg --force; mit --force
+    Warnzeile je blockiertem Fonds im Log. Ergebnis-CSV wird erst am Ende geschrieben --
+    bricht der Guard ab, bleibt eine vorhandene CSV unveraendert.
 v49 (4) Mapping: Abdeckung je Fonds nach Wert (Anteil mit Ticker) + die 20
     groessten nicht zugeordneten Positionen (CUSIP, name, wert, titleOfClass).
     Anleihen, Optionen und Nicht-US-Titel gelten als "nicht aktienrelevant" und
@@ -47,10 +52,10 @@ Screener-Logik bleibt unveraendert; Modul ist eigenstaendig lauffaehig
 
 Aufruf:
     python smart_money.py fetch [--quarters 8] [--reset] [--db value_tracker.db]
-    python smart_money.py score TICKER [TICKER ...] [--db ...]
-    python smart_money.py score --ranking ranking.csv [--db ...]
+    python smart_money.py score TICKER [TICKER ...] [--db ...] [--force]
+    python smart_money.py score --ranking ranking.csv [--db ...] [--force]
     python smart_money.py overlap --ranking ranking.csv --watch ticker_watch_v40.csv
-        [--out smart_money_overlap.csv] [--db ...]
+        [--out smart_money_overlap.csv] [--db ...] [--force]
     python smart_money.py rationale-import rationale_import.csv [--db ...]
     python smart_money.py ciks [--db ...]          # CIK-Aufloesung + Filer-Status
     python smart_money.py show TICKER [--db ...]
@@ -1067,7 +1072,8 @@ def plausibility_report(con: sqlite3.Connection, cfg: dict, heute: date | None =
             "WHERE fonds=? GROUP BY periode ORDER BY periode DESC", (name,)).fetchall()
         if not rows:
             out.append({"fonds": name, "neueste": None, "report_date": None, "alter_tage": None,
-                        "fehlend_letzte": "alle", "ok": False, "positionen": 0})
+                        "fehlend_letzte": "alle", "ok": False, "positionen": 0,
+                        "grund": "keine Positionen in smart_money_positions"})
             continue
         neueste, rd, fd, _n = rows[0]
         basis_datum = (rd or fd or "")[:10]
@@ -1078,8 +1084,13 @@ def plausibility_report(con: sqlite3.Connection, cfg: dict, heute: date | None =
         present = {r[0] for r in rows}
         fehlend = [p for p in expected_periodes(neueste, letzte) if p not in present]
         ok = (alter is None or alter <= max_age_tage) and not fehlend
+        gruende = []  # v49 (3b): expliziter Grund je Fonds fuer die Abbruchmeldung
+        if alter is not None and alter > max_age_tage:
+            gruende.append(f"neueste Periode {neueste} ist {alter} Tage alt (> {max_age_tage} Tage)")
+        if fehlend:
+            gruende.append(f"Periodenluecke in den letzten {letzte} Perioden: {', '.join(fehlend)}")
         out.append({"fonds": name, "neueste": neueste, "report_date": rd, "alter_tage": alter,
-                    "fehlend_letzte": fehlend, "ok": ok,
+                    "fehlend_letzte": fehlend, "ok": ok, "grund": "; ".join(gruende),
                     "positionen": sum(r[3] for r in rows)})
     return out
 
@@ -1100,14 +1111,38 @@ def plausibility_lines(rep: list[dict]) -> list[str]:
 
 def check_plausibility(con: sqlite3.Connection, cfg: dict, force: bool = False,
                        heute: date | None = None) -> list[dict]:
-    """v49: score/overlap brechen ab, wenn die neueste Periode eines Fonds aelter
-    als 140 Tage ist oder in den letzten 4 Perioden eine fehlt. --force ueberstimmt.
-    Rueckgabe: Report je Fonds; bei Verstoessen und nicht force -> SystemExit."""
+    """v49 (3b): score/overlap brechen ab, wenn die neueste Periode eines Fonds aelter
+    als 140 Tage ist oder in den letzten 4 Perioden eine fehlt. `--force` ueberstimmt
+    ausschliesslich DIESE Pruefung -- Schema-Guard (RuntimeError) und User-Agent-Pruefung
+    (UserAgentError) schlagen weiterhin hart durch. Ohne --force: SystemExit, je
+    blockiertem Fonds mit Periode + Grund, plus explizitem Ausweg --force (kein
+    Silent-Continue; eine vorhandene Ergebnis-CSV wird nicht angefasst -- geschrieben
+    wird erst am Ende des Laufs). Mit --force: Lauf normal, aber je blockiertem Fonds
+    eine Warnzeile im Log (Fonds, neueste Periode, Alter in Tagen, fehlende Perioden).
+    Rueckgabe: Report je Fonds."""
     rep = plausibility_report(con, cfg, heute=heute)
     bad = [r for r in rep if not r["ok"]]
+    if bad and force:
+        for r in bad:
+            fehl = r["fehlend_letzte"]
+            fehl_txt = fehl if isinstance(fehl, str) else (", ".join(fehl) or "-")
+            alt = r["alter_tage"] if r["alter_tage"] is not None else "?"
+            logger.warning("smart_money: --force aktiv -- Fonds %s fliesst mit Luecke ein: "
+                           "neueste Periode %s (%s Tage alt), fehlend letzte %d: %s | Grund: %s",
+                           r["fonds"], r["neueste"] or "-", alt, PLAUSIBILITY_LETZTE_PERIODEN,
+                           fehl_txt, r.get("grund") or "-")
     if bad and not force:
-        msg = ["Abbruch Vollstaendigkeitsschutz (--force ueberstimmt):"]
-        msg += plausibility_lines(rep)
+        msg = ["Abbruch Vollstaendigkeitsschutz (v49) -- blockierte Fonds:"]
+        for r in bad:
+            alt = f"{r['alter_tage']} Tage alt" if r["alter_tage"] is not None else "Datum unbekannt"
+            fehl = r["fehlend_letzte"]
+            fehl_txt = fehl if isinstance(fehl, str) else (", ".join(fehl) or "-")
+            msg.append(f"  {r['fonds']}: neueste Periode {r['neueste'] or '-'} "
+                       f"(report_date {r['report_date'] or '-'}, {alt}) | fehlend letzte "
+                       f"{PLAUSIBILITY_LETZTE_PERIODEN}: {fehl_txt} | Grund: {r.get('grund') or '-'}")
+        msg.append("Ausweg: --force setzt die Vollstaendigkeitspruefung fuer diesen Lauf aus "
+                   "(blockierte Fonds fliessen mit Luecke ein, Warnzeile je Fonds im Log). "
+                   "Schema-Guard und User-Agent-Pruefung bleiben davon unberuehrt.")
         raise SystemExit("\n".join(msg))
     return rep
 
@@ -1493,7 +1528,9 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
     Ticker: alle Watchlist-Ticker + alle Ticker mit Fonds-Aktivitaet.
     v49: Vollstaendigkeitsschutz -- Abbruch mit klarer Meldung, wenn die neueste
     Periode eines Fonds aelter als 140 Tage ist oder in den letzten 4 Perioden
-    eine fehlt (--force ueberstimmt)."""
+    eine fehlt (--force ueberstimmt). v49 (3b): Die Ergebnis-CSV wird erst am
+    Ende geschrieben -- bricht der Guard ab (ohne --force), bleibt eine vorhandene
+    Datei unveraendert; die Spalten bleiben mit --force unveraendert."""
     rows_in = load_ranking_csv(ranking_csv)
     by_t = {(r.get("ticker") or "").strip().upper(): r for r in rows_in}
     watch = load_watch_csv(watch_csv)
@@ -1590,6 +1627,7 @@ def cmd_fetch(args) -> None:
 
 
 def cmd_score(args) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     cfg = load_config()
     if args.ranking:
         rows = load_ranking_csv(args.ranking)
@@ -1713,14 +1751,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_s.add_argument("tickers", nargs="*")
     p_s.add_argument("--ranking", default=None, help="ranking CSV (alle Ticker daraus)")
     p_s.add_argument("--force", action="store_true",
-                     help="v49: Vollstaendigkeitsschutz ueberstimmen (stale/lueckige Perioden)")
+                     help="v49 (3b): NUR den Vollstaendigkeitsschutz ueberstimmen (stale/lueckige "
+                          "Perioden); Schema-Guard und User-Agent-Pruefung bleiben unberuehrt")
     p_s.set_defaults(func=cmd_score)
     p_o = sub.add_parser("overlap", help="Abgleich Screener x Smart Money -> smart_money_overlap.csv")
     p_o.add_argument("--ranking", required=True, help="ranking CSV (status_all, quality, mos_*)")
     p_o.add_argument("--watch", default=None, help="Watchlist-CSV (Default: ticker_watch_v40.csv falls vorhanden)")
     p_o.add_argument("--out", default="smart_money_overlap.csv")
     p_o.add_argument("--force", action="store_true",
-                     help="v49: Vollstaendigkeitsschutz ueberstimmen (stale/lueckige Perioden)")
+                     help="v49 (3b): NUR den Vollstaendigkeitsschutz ueberstimmen (stale/lueckige "
+                          "Perioden); Schema-Guard und User-Agent-Pruefung bleiben unberuehrt")
     p_o.set_defaults(func=cmd_overlap)
     p_c = sub.add_parser("ciks", help="CIK-Aufloesung + 13F-Filer-Status aller Fonds")
     p_c.set_defaults(func=cmd_ciks)
