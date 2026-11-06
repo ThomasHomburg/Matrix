@@ -8,3 +8,4 @@ __pycache__/
 tickers_stoxx600.csv
 .ranking_cache.json
 ranking_*.csv
+smart_money_overlap.csv
