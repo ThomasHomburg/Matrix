@@ -170,7 +170,8 @@ def test_openfigi_23_cusips_5_anfragen_ohne_key_und_dauerhaft(monkeypatch):
     def fetcher(url: str) -> bytes:
         calls.append(url)
         n = len(calls)
-        return json.dumps([{"ticker": f"T{n}_{i}"} for i in range(5)]).encode()
+        # v49 (4a): echte OpenFIGI-Struktur {"data": [{... US-Eintrag ...}]} je Eingabe
+        return json.dumps([{"data": [{"ticker": f"T{n}_{i}", "exchCode": "US"}]} for i in range(5)]).encode()
 
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher, sleeper=lambda s: None)
     con = smart_money.connect(":memory:")
@@ -193,7 +194,7 @@ def test_openfigi_mit_api_key_bis_100_pro_anfrage(monkeypatch):
 
     def fetcher(url: str) -> bytes:
         calls.append(url)
-        return json.dumps([{"ticker": f"T{i}"} for i in range(100)]).encode()
+        return json.dumps([{"data": [{"ticker": f"T{i}", "exchCode": "US"}]} for i in range(100)]).encode()
 
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher, sleeper=lambda s: None)
     cusips = [f"C{i:09d}" for i in range(23)]
@@ -207,7 +208,7 @@ def test_openfigi_pacing_mindestens_2_5_s(monkeypatch):
     sleeps = []
 
     def fetcher(url: str) -> bytes:
-        return json.dumps([{"ticker": f"T{i}"} for i in range(5)]).encode()
+        return json.dumps([{"data": [{"ticker": f"T{i}", "exchCode": "US"}]} for i in range(5)]).encode()
 
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher, sleeper=sleeps.append)
     cusips = [f"C{i:09d}" for i in range(12)]                 # 3 Chunks -> 2 Pausen
@@ -225,7 +226,7 @@ def test_openfigi_429_retry(monkeypatch):
         state["n"] += 1
         if state["n"] == 1:
             raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, BytesIO(b""))
-        return json.dumps([{"ticker": "AAA"}]).encode()
+        return json.dumps([{"data": [{"ticker": "AAA", "exchCode": "US"}]}]).encode()
 
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, retry_tries=3,
                                retry_waits=(2.0, 5.0, 10.0), fetcher=fetcher,
@@ -239,7 +240,7 @@ def test_unmapped_einmalig_als_liste(monkeypatch):
     cfg = _openfigi_cfg(monkeypatch)
 
     def fetcher(url: str) -> bytes:
-        return json.dumps([{"ticker": "AAA"}, {}]).encode()  # 2. CUSIP ohne ticker
+        return json.dumps([{"data": [{"ticker": "AAA", "exchCode": "US"}]}, {}]).encode()  # 2. CUSIP ohne data
 
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher, sleeper=lambda s: None)
     errors, unmapped = [], []
