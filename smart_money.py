@@ -852,24 +852,46 @@ def compare_quarters(prev: dict[str, dict], cur: dict[str, dict]) -> list[dict]:
 MIGRATION_PFLICHT_SPALTEN = ("periode", "accession", "report_date")
 
 
+def _fehlende_pflichtspalten(con: sqlite3.Connection) -> list[str]:
+    """v49 (1b): PRAGMA table_info(smart_money_positions) -> fehlende Spalten aus
+    MIGRATION_PFLICHT_SPALTEN (periode, accession, report_date)."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(smart_money_positions)")}
+    return [c for c in MIGRATION_PFLICHT_SPALTEN if c not in cols]
+
+
+def _assert_positions_schema(con: sqlite3.Connection) -> None:
+    """v49 (1b): Schema-Guard -- hat die (ggf. soeben neu angelegte) Tabelle wirklich
+    das aktuelle Schema? Sonst sofort RuntimeError (kein Silent-Continue, kein
+    Teil-Lauf): schema.sql ist veraltet oder fehlt -> Lauf abbrechen, Altzeilen
+    bleiben unveraendert."""
+    fehlend = _fehlende_pflichtspalten(con)
+    if fehlend:
+        raise RuntimeError(
+            "smart_money: Tabelle smart_money_positions hat nicht das aktuelle Schema "
+            f"(fehlende Spalten: {', '.join(fehlend)}). schema.sql ist veraltet oder fehlt: "
+            f"{SCHEMA_PATH} -- schema.sql aktualisieren (Spalten periode, accession, report_date; "
+            "siehe CLAUDE.md v48/v49) und den Lauf wiederholen. Altzeilen bleiben unveraendert.")
+
+
 def _migrate_positions(con: sqlite3.Connection) -> None:
     """v49: Migration smart_money_positions. Per PRAGMA table_info werden die
     Pflichtspalten (periode, accession, report_date) geprueft; fehlt eine, werden
     die Altzeilen verworfen (Perioden falsch) mit Hinweis im Log und die Tabelle
-    aus schema.sql neu aufgebaut. Danach werden optionale Spalten (cusip, name,
-    title_of_class) additiv per ALTER ergaenzt und periode aus report_date
-    neu beschriftet."""
+    aus schema.sql neu aufgebaut -- danach _assert_positions_schema (v49 1b).
+    Anschliessend werden optionale Spalten (cusip, name, title_of_class) additiv
+    per ALTER ergaenzt und periode aus report_date neu beschriftet."""
     cols = {r[1] for r in con.execute("PRAGMA table_info(smart_money_positions)")}
     if not cols:
         return
-    if not set(MIGRATION_PFLICHT_SPALTEN) <= cols:
-        fehlend = [c for c in MIGRATION_PFLICHT_SPALTEN if c not in cols]
+    fehlend = _fehlende_pflichtspalten(con)
+    if fehlend:
         logger.warning("smart_money: Migration smart_money_positions -- Pflichtspalten %s fehlen; "
                        "Altzeilen werden verworfen (Periodenlabel falsch), Tabelle wird neu aufgebaut "
                        "(cusip_map bleibt; Positionen per fetch/--reset neu laden)", ", ".join(fehlend))
         con.execute("DROP TABLE smart_money_positions")
         con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         con.commit()
+        _assert_positions_schema(con)  # v49 (1b): veraltete schema.sql -> RuntimeError statt Teil-Lauf
         return
     for col, decl in (("cusip", "TEXT NOT NULL DEFAULT ''"), ("name", "TEXT"), ("title_of_class", "TEXT")):
         if col not in cols:
@@ -899,9 +921,8 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
         "SELECT name FROM sqlite_master WHERE type='table' AND name='smart_money_positions'"
     ).fetchone()
     if exists:
-        cols = {r[1] for r in con.execute("PRAGMA table_info(smart_money_positions)")}
-        if not set(MIGRATION_PFLICHT_SPALTEN) <= cols:
-            fehlend = [c for c in MIGRATION_PFLICHT_SPALTEN if c not in cols]
+        fehlend = _fehlende_pflichtspalten(con)
+        if fehlend:
             logger.warning("smart_money: Migration smart_money_positions -- Pflichtspalten %s fehlen; "
                            "Altzeilen werden verworfen (Periodenlabel falsch), Tabelle wird neu aufgebaut "
                            "(cusip_map bleibt; Positionen per fetch/--reset neu laden)", ", ".join(fehlend))
@@ -909,6 +930,7 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     con.commit()
     _migrate_positions(con)
+    _assert_positions_schema(con)  # v49 (1b): Endverifikation nach connect
     return con
 
 
@@ -1143,6 +1165,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
         con.execute("DROP TABLE smart_money_positions")
         con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         con.commit()
+        _assert_positions_schema(con)  # v49 (1b): veraltete schema.sql -> RuntimeError vor dem ersten Fonds
         logger.info("smart_money: --reset -- smart_money_positions per DROP+CREATE neu angelegt "
                     "(cusip_map bleibt)")
     unmapped: list[str] = []  # v46: nicht zuordenbare CUSIPs -- einmal am Ende als Liste
