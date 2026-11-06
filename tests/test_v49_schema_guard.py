@@ -23,6 +23,12 @@ connect wirft RuntimeError (Meldung enthaelt periode und schema.sql), Altzustand
 bleibt abbruchfaehig, fetch_all wirft sofort RuntimeError; (c) alte Tabelle +
 aktuelles schema.sql -> Migration laeuft, Altzeilen verworfen, cusip_map bleibt;
 (d) --reset-Pfad mit veraltetem Fixture -> RuntimeError statt Einzelfehler je Fonds.
+
+v49 (1c) -- Optionen: store_quarter schreibt periode auch in smart_money_options;
+Migration, --reset und Guard pruefen daher beide Tabellen.
+(e) DB im aktuellen Schema, dann Options-Tabelle durch die alte v42-Version (Spalte
+quartal) ersetzt -> connect() legt sie neu an (Altzeilen verworfen), store_quarter-
+Round-trip mit Positions- UND Options-INSERT in die periode-Spalte erfolgreich.
 """
 
 import sqlite3
@@ -48,6 +54,22 @@ CREATE TABLE IF NOT EXISTS smart_money_positions (
     UNIQUE (fonds, quartal, ticker)
 );
 CREATE INDEX IF NOT EXISTS idx_smp_quartal ON smart_money_positions (quartal);
+"""
+
+
+# alte Options-Tabelle (v42-Format: Spalte quartal, ohne periode)
+OLD_OPTIONS_SCHEMA = """
+CREATE TABLE smart_money_options (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fonds TEXT NOT NULL,
+    quartal TEXT NOT NULL,
+    filing_datum TEXT,
+    ticker TEXT,
+    put_call TEXT NOT NULL,
+    shares REAL, wert REAL,
+    geladen_am TEXT NOT NULL,
+    UNIQUE (fonds, quartal, ticker, put_call)
+);
 """
 
 
@@ -141,3 +163,42 @@ def test_reset_path_stale_schema_raises(tmp_path, monkeypatch):
     con.commit()
     with pytest.raises(RuntimeError, match="fehlende Spalten: periode"):
         smart_money._assert_positions_schema(con)
+
+
+# (e) v49 (1c): alte Options-Tabelle (v42: quartal) -> connect() legt sie neu an
+# (Altzeilen verworfen); store_quarter-Round-trip Positions + Optionen in periode
+def test_stale_options_table_recreated_store_quarter_roundtrip(tmp_path):
+    db = tmp_path / "opt.db"
+    con = smart_money.connect(db)                   # DB im aktuellen Schema
+    assert smart_money._fehlende_pflichtspalten(con, "smart_money_options",
+                                                smart_money.OPTIONS_PFLICHT_SPALTEN) == []
+    # Options-Tabelle durch die alte v42-Version (quartal) ersetzen, eine Altzeile drin
+    con.execute("DROP TABLE smart_money_options")
+    con.executescript(OLD_OPTIONS_SCHEMA)
+    con.execute("INSERT INTO smart_money_options (fonds, quartal, filing_datum, ticker, put_call,"
+                " shares, wert, geladen_am) VALUES ('F','06-Q10','2026-08-15','AAA','CALL',100,5000,'t')")
+    con.commit()
+    con.close()
+    # connect(): _drop_wenn_veraltet verwirft die alte Options-Tabelle, schema.sql legt sie neu an
+    con = smart_money.connect(db)
+    ocols = {r[1] for r in con.execute("PRAGMA table_info(smart_money_options)")}
+    assert "periode" in ocols and "quartal" not in ocols
+    assert con.execute("SELECT COUNT(*) FROM smart_money_options").fetchone()[0] == 0  # Altzeilen verworfen
+    assert smart_money._fehlende_pflichtspalten(con, "smart_money_options",
+                                                smart_money.OPTIONS_PFLICHT_SPALTEN) == []
+    smart_money._assert_positions_schema(con)       # beide Tabellen ok -> wirft nichts
+    # store_quarter-Round-trip: Positions- UND Options-INSERT in die periode-Spalte
+    cfg = _cfg()
+    rows = [{"cusip": "111111111", "aktion": "neu", "aenderung_pct": float("nan"),
+             "shares": 1700.0, "wert": 170000.0, "name": "AAA Corp"}]
+    options = [{"cusip": "222222222", "put_call": "CALL", "shares": 100.0, "value": 5000.0}]
+    n = smart_money.store_quarter(con, "F", "2026-Q2", "2026-08-15", rows,
+                                  {"111111111": "AAA", "222222222": "BBB"}, 170000.0,
+                                  options, cfg, None, by_ticker_keys=["AAA"],
+                                  report_date="2026-06-30", accession="0001067983-26-000008")
+    assert n == 1
+    p = con.execute("SELECT fonds, periode, ticker FROM smart_money_positions").fetchall()
+    assert p == [("F", "2026-Q2", "AAA")]
+    o = con.execute("SELECT fonds, periode, ticker, put_call FROM smart_money_options").fetchall()
+    assert o == [("F", "2026-Q2", "BBB", "CALL")]
+    con.close()

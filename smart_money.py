@@ -5,6 +5,10 @@ v49 (1) Migration: Beim Start (connect) prueft das Modul per PRAGMA table_info,
     Fehlt eine -> Tabelle migrieren: Altzeilen werden verworfen (Periodenlabel
     falsch), Hinweis im Log; `fetch --reset` legt die Tabelle per DROP + CREATE
     im aktuellen Schema neu an (cusip_map bleibt).
+v49 (1c) Optionen: store_quarter schreibt periode auch in smart_money_options;
+    Migration, `fetch --reset` und der Schema-Guard pruefen daher BEIDE Tabellen
+    (Optionen: Pflichtspalte periode) -- eine alte Options-Tabelle (v42: quartal)
+    wird verworfen und neu aufgebaut statt per CREATE IF NOT EXISTS zu ueberleben.
 v49 (2) Basisperiode: die aelteste geladene Periode je Fonds hat aktion =
     "basis" (nie "neu"); neu/erhoeht/reduziert/verkauft nur mit Vorquartal.
     Score und Urteil ignorieren "basis".
@@ -850,27 +854,52 @@ def compare_quarters(prev: dict[str, dict], cur: dict[str, dict]) -> list[dict]:
 # v49: Pflichtspalten der Migration -- fehlt eine, sind die Altzeilen nicht
 # zuverlaessig (Periodenlabel falsch) -> Tabelle wird verworfen und neu aufgebaut
 MIGRATION_PFLICHT_SPALTEN = ("periode", "accession", "report_date")
+# v49 (1c): store_quarter schreibt periode auch in smart_money_options; eine alte
+# Options-Tabelle (v42: Spalte quartal) ueberlebt sonst jedes CREATE IF NOT EXISTS
+OPTIONS_PFLICHT_SPALTEN = ("periode",)
 
 
-def _fehlende_pflichtspalten(con: sqlite3.Connection) -> list[str]:
-    """v49 (1b): PRAGMA table_info(smart_money_positions) -> fehlende Spalten aus
-    MIGRATION_PFLICHT_SPALTEN (periode, accession, report_date)."""
-    cols = {r[1] for r in con.execute("PRAGMA table_info(smart_money_positions)")}
-    return [c for c in MIGRATION_PFLICHT_SPALTEN if c not in cols]
+def _fehlende_pflichtspalten(con: sqlite3.Connection, table: str = "smart_money_positions",
+                             spalten: tuple[str, ...] = MIGRATION_PFLICHT_SPALTEN) -> list[str]:
+    """v49 (1b/1c): PRAGMA table_info(<table>) -> fehlende Spalten aus `spalten`
+    (Default: smart_money_positions vs. MIGRATION_PFLICHT_SPALTEN =
+    periode/accession/report_date)."""
+    cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+    return [c for c in spalten if c not in cols]
+
+
+def _drop_wenn_veraltet(con: sqlite3.Connection, table: str, spalten: tuple[str, ...],
+                        hinweis: str) -> None:
+    """v49 (1c): Tabelle `table` droppen, wenn sie existiert, aber Pflichtspalten fehlen
+    (sonst ueberlebt CREATE IF NOT EXISTS die alte Form -- z. B. Options-Tabelle v42
+    mit Spalte quartal; store_quarter scheitert dann mit no such column: periode)."""
+    exists = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    if not exists:
+        return
+    fehlend = _fehlende_pflichtspalten(con, table, spalten)
+    if fehlend:
+        logger.warning("smart_money: Migration %s -- Pflichtspalten %s fehlen; %s",
+                       table, ", ".join(fehlend), hinweis)
+        con.execute(f"DROP TABLE {table}")
 
 
 def _assert_positions_schema(con: sqlite3.Connection) -> None:
-    """v49 (1b): Schema-Guard -- hat die (ggf. soeben neu angelegte) Tabelle wirklich
-    das aktuelle Schema? Sonst sofort RuntimeError (kein Silent-Continue, kein
+    """v49 (1b/1c): Schema-Guard -- haben die (ggf. soeben neu angelegten) Tabellen
+    wirklich das aktuelle Schema (Positionen: periode/accession/report_date;
+    Optionen: periode)? Sonst sofort RuntimeError (kein Silent-Continue, kein
     Teil-Lauf): schema.sql ist veraltet oder fehlt -> Lauf abbrechen, Altzeilen
     bleiben unveraendert."""
-    fehlend = _fehlende_pflichtspalten(con)
-    if fehlend:
-        raise RuntimeError(
-            "smart_money: Tabelle smart_money_positions hat nicht das aktuelle Schema "
-            f"(fehlende Spalten: {', '.join(fehlend)}). schema.sql ist veraltet oder fehlt: "
-            f"{SCHEMA_PATH} -- schema.sql aktualisieren (Spalten periode, accession, report_date; "
-            "siehe CLAUDE.md v48/v49) und den Lauf wiederholen. Altzeilen bleiben unveraendert.")
+    for table, spalten in (("smart_money_positions", MIGRATION_PFLICHT_SPALTEN),
+                           ("smart_money_options", OPTIONS_PFLICHT_SPALTEN)):
+        fehlend = _fehlende_pflichtspalten(con, table, spalten)
+        if fehlend:
+            raise RuntimeError(
+                f"smart_money: Tabelle {table} hat nicht das aktuelle Schema "
+                f"(fehlende Spalten: {', '.join(fehlend)}). schema.sql ist veraltet oder fehlt: "
+                f"{SCHEMA_PATH} -- schema.sql aktualisieren (siehe CLAUDE.md v48/v49) und den Lauf "
+                "wiederholen. Altzeilen bleiben unveraendert.")
 
 
 def _migrate_positions(con: sqlite3.Connection) -> None:
@@ -914,23 +943,19 @@ def _migrate_positions(con: sqlite3.Connection) -> None:
 
 def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
-    # v49: alte Tabellenform (Pflichtspalten fehlen) vor dem Schema-Lauf droppen
-    # (sonst schlaegt CREATE INDEX auf der fehlenden Spalte fehl); Altzeilen werden
-    # verworfen -- Hinweis im Log siehe _migrate_positions
-    exists = con.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='smart_money_positions'"
-    ).fetchone()
-    if exists:
-        fehlend = _fehlende_pflichtspalten(con)
-        if fehlend:
-            logger.warning("smart_money: Migration smart_money_positions -- Pflichtspalten %s fehlen; "
-                           "Altzeilen werden verworfen (Periodenlabel falsch), Tabelle wird neu aufgebaut "
-                           "(cusip_map bleibt; Positionen per fetch/--reset neu laden)", ", ".join(fehlend))
-            con.execute("DROP TABLE smart_money_positions")
+    # v49 (1c): alte Tabellenform (Pflichtspalten fehlen) vor dem Schema-Lauf droppen
+    # (sonst ueberlebt CREATE IF NOT EXISTS die alte Form und ein CREATE INDEX schlaegt
+    # auf der fehlenden Spalte fehl); Altzeilen werden verworfen -- Hinweis im Log
+    # siehe _drop_wenn_veraltet. Gilt fuer BEIDE Tabellen: smart_money_positions
+    # (periode/accession/report_date) und smart_money_options (periode)
+    _hinweis = ("Altzeilen werden verworfen (Periodenlabel falsch), Tabelle wird neu aufgebaut "
+                "(cusip_map bleibt; Positionen/Optionen per fetch/--reset neu laden)")
+    _drop_wenn_veraltet(con, "smart_money_positions", MIGRATION_PFLICHT_SPALTEN, _hinweis)
+    _drop_wenn_veraltet(con, "smart_money_options", OPTIONS_PFLICHT_SPALTEN, _hinweis)
     con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     con.commit()
     _migrate_positions(con)
-    _assert_positions_schema(con)  # v49 (1b): Endverifikation nach connect
+    _assert_positions_schema(con)  # v49 (1b/1c): Endverifikation nach connect
     return con
 
 
@@ -1138,7 +1163,8 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
     speichert Positionen/Optionen, sammelt 13D-Katalysatoren der Aktivisten.
 
     v48: `reset=True` leert smart_money_positions vorab (cusip_map bleibt) und
-    laedt die letzten Perioden neu. Im `report` je Fonds zusaetzlich
+    laedt die letzten Perioden neu; v49 (1c): beide Tabellen (Positionen + Optionen)
+    werden per DROP + CREATE neu angelegt. Im `report` je Fonds zusaetzlich
     "completeness" (Vollstaendigkeitspruefung) und "mapping" (Abdeckung nach
     Wert mit Ticker).
 
@@ -1160,14 +1186,16 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                    fetcher=fetcher, errors=errors, sleeper=sleeper or time.sleep)
     con = connect(db_path)
     if reset:
-        # v49: fetch --reset -- Tabelle per DROP + CREATE im aktuellen Schema neu
-        # anlegen (cusip_map bleibt erhalten), danach die letzten Perioden neu laden
-        con.execute("DROP TABLE smart_money_positions")
+        # v49 (1c): fetch --reset -- BEIDE Tabellen per DROP TABLE IF EXISTS + CREATE
+        # im aktuellen Schema neu anlegen (cusip_map bleibt erhalten), danach die
+        # letzten Perioden neu laden
+        con.execute("DROP TABLE IF EXISTS smart_money_positions")
+        con.execute("DROP TABLE IF EXISTS smart_money_options")
         con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         con.commit()
-        _assert_positions_schema(con)  # v49 (1b): veraltete schema.sql -> RuntimeError vor dem ersten Fonds
-        logger.info("smart_money: --reset -- smart_money_positions per DROP+CREATE neu angelegt "
-                    "(cusip_map bleibt)")
+        _assert_positions_schema(con)  # v49 (1b/1c): veraltete schema.sql -> RuntimeError vor dem ersten Fonds
+        logger.info("smart_money: --reset -- smart_money_positions + smart_money_options per DROP+CREATE "
+                    "neu angelegt (cusip_map bleibt)")
     unmapped: list[str] = []  # v46: nicht zuordenbare CUSIPs -- einmal am Ende als Liste
     all_titles: dict[str, str] = {}   # v49: cusip -> titleOfClass ( fuer nicht-aktienrelevant )
     option_cusips: set = set()        # v49: CUSIPs der Optionen (zaehlen nicht als Fehler)
