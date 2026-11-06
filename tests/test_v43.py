@@ -306,8 +306,10 @@ def test_score_4_zwei_quartale_plus_rationale(sm_db, tmp_path):
                 "VALUES ('AAA', 'Buffett erhoeht', 'https://example.com/b', '2025-09-01', 'Brief')")
     con.commit()
     s = smart_money.smart_money_score("AAA", cfg, db_path=db)
-    # Q1: Berkshire+Pershing neu (gew 2.0 -> cond3), Q2 erhoeht (cond3) + Rationale -> 4, dann -1 Duquesne -> 3
-    assert s["score"] == 3
+    # v49: Q1 (aelteste geladene Periode) ist aktion="basis" -> Score-4 (zwei aufeinanderfolgende
+    # Quartale mit cond3) greift nicht; Q2 erhoeht Berkshire+Pershing (gew 2.0 -> cond3) -> 3,
+    # dann -1 Duquesne (reduziert -40 %) -> 2
+    assert s["score"] == 2
     assert s["rationale_vorhanden"] is True
 
 
@@ -373,7 +375,9 @@ def test_overlap_csv(sm_db, tmp_path):
     watch = tmp_path / "watch.csv"
     watch.write_text("ticker\nAAA\nKAT\n", encoding="utf-8")
     out = tmp_path / "smart_money_overlap.csv"
-    rows = smart_money.overlap(str(ranking), str(watch), cfg, db_path=db, out_path=str(out))
+    # v49: Fixture-DB hat nur 2 Perioden je Fonds -> Vollstaendigkeitsschutz wuerde abbrechen;
+    # hier mit force=True (Abbruch selbst wird in test_v49 geprueft)
+    rows = smart_money.overlap(str(ranking), str(watch), cfg, db_path=db, out_path=str(out), force=True)
     by = {r["ticker"]: r for r in rows}
     assert set(by) >= {"AAA", "BBB", "CCC", "KAT"}   # Watchlist + aktive Fonds-Ticker
     assert by["AAA"]["smart_money_urteil"] == "Bestaetigung"   # Fonds kauft + Kandidat

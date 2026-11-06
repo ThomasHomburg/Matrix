@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS smart_money_positions (
     filing_datum    TEXT,                      -- ISO-Datum des (neuesten) 13F-Filings
     cusip           TEXT NOT NULL DEFAULT '',  -- v48: CUSIP der Position
     ticker          TEXT,                      -- gemappt; NULL wenn nicht zuordenbar (v48)
+    name            TEXT,                      -- v49: nameOfIssuer
+    title_of_class  TEXT,                      -- v49: titleOfClass (z. B. COMMON STOCK, BOND)
     shares          REAL,
     wert            REAL,                      -- Marktwert USD (infotable: 1000 USD x 1000)
     anteil_portfolio REAL,                     -- wert / Gesamtwert Aktien des Fonds-Quartals
