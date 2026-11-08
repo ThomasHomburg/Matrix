@@ -150,7 +150,8 @@ CREATE TABLE IF NOT EXISTS cusip_map (
     cusip       TEXT PRIMARY KEY,
     ticker      TEXT NOT NULL,
     quelle      TEXT,                      -- v48: openfigi | name_match | manuell
-    geladen_am  TEXT NOT NULL
+    geladen_am  TEXT NOT NULL,
+    is_etf      INTEGER NOT NULL DEFAULT 0 -- v49 (4b): 1 = ETF/Index (OpenFIGI securityType/marketSector oder config etf_ticker); alte DBs per ALTER in connect() migriert
 );
 
 -- v42/v43: Rationale (nur manuell oder per Import rationale_import.csv, Pflicht quelle_url)

@@ -40,7 +40,7 @@ def _rd(periode: str) -> str:
 
 OVERLAP_COLS = ("ticker,status_all,quality,mos_rule,smart_money_score,fonds_kaeufer,"
                 "fonds_verkaeufer,letzte_aktion,filing_datum,daten_alter_tage,"
-                "katalysator_13d,rationale_vorhanden,smart_money_urteil")
+                "katalysator_13d,rationale_vorhanden,smart_money_urteil,etf")  # v49 (4b): Spalte etf am Ende
 
 
 def _cfg():

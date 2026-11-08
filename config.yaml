@@ -417,6 +417,9 @@ smart_money:
   quarters: 8                     # letzte 8 Quartale 13F-HR je Fonds
   cusip_map_url: "https://api.openfigi.com/v3/mapping"  # CUSIP -> Ticker (POST)
   cusip_map: {}                   # statisches CUSIP->Ticker (Fixtures/lokal); Rest OpenFIGI
+  # v49 (4b): bekannte ETF/Index-Ticker -- Startpunkt, hier erweiterbar (keine Magic Strings im Code);
+  # zus. mit cusip_map.is_etf (OpenFIGI securityType != 'Common Stock' / marketSector 'MarketSector/Market')
+  etf_ticker: [SPY, IWM, EEM, SGOV, ACWI, ACWX, IJH, IJR, IWN, IWR, ITA, IGF, IEUR, INDA, EUFN, ESGD, IWD, MBB, HYG, ARGT, EFA, QNT]
   googl_merge: {GOOGL: GOOG}      # gleiche Aktie je Fonds zusammenfassen
   rationale_csv: "rationale_import.csv"  # Pflichtfeld quelle_url beim Import
   rules:
