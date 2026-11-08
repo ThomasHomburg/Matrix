@@ -429,6 +429,8 @@ def test_attach_smart_money_watchlist(sm_db, tmp_path):
 # --- Rationale-Import: Pflicht quelle_url ---------------------------------------
 
 def test_rationale_import_pflicht_quelle(sm_db, tmp_path, capsys):
+    # v49 (5): schaerfere Validierung -- fehlt text oder quelle_url, bricht der Import mit
+    # Fehlerliste (Zeilennummer + fehlendes Feld) ab und importiert NICHTS (kein Teil-Import)
     cfg, db, _ = sm_db
     csv_file = tmp_path / "rationale_import.csv"
     csv_file.write_text(
@@ -436,11 +438,17 @@ def test_rationale_import_pflicht_quelle(sm_db, tmp_path, capsys):
         "AAA,Buffett erhoeht,https://example.com/b,2025-09-01,Brief\n"
         "BBB,ohne Quelle,,2025-09-01,Interview\n", encoding="utf-8")
     import argparse
-    smart_money.cmd_rationale_import(argparse.Namespace(db=str(db), csv_file=str(csv_file)))
-    out = capsys.readouterr().out + capsys.readouterr().err
+    import pytest
+    with pytest.raises(SystemExit) as ei:
+        smart_money.cmd_rationale_import(argparse.Namespace(db=str(db), csv_file=str(csv_file)))
+    assert "Zeile 3" in str(ei.value) and "quelle_url" in str(ei.value)   # Zeilennummer + fehlendes Feld
     con = sqlite3.connect(db)
-    n = con.execute("SELECT COUNT(*) FROM smart_money_rationale").fetchone()[0]
-    assert n == 1  # BBB ohne quelle_url uebersprungen
+    assert con.execute("SELECT COUNT(*) FROM smart_money_rationale").fetchone()[0] == 0  # atomar: nichts importiert
+    # gueltige Datei ohne Luecken importiert
+    csv_file.write_text(
+        "ticker,text,quelle_url,datum,typ\n"
+        "AAA,Buffett erhoeht,https://example.com/b,2025-09-01,Brief\n", encoding="utf-8")
+    smart_money.cmd_rationale_import(argparse.Namespace(db=str(db), csv_file=str(csv_file)))
     r = con.execute("SELECT quelle_url, typ FROM smart_money_rationale WHERE ticker='AAA'").fetchone()
     assert r[0] == "https://example.com/b" and r[1] == "Brief"
 
