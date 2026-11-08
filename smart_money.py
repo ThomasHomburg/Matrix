@@ -90,12 +90,21 @@ Aufruf:
     Minimum verkauf_min_score (1). Zusaetzlich je Ticker: fonds_kaeufer,
     fonds_verkaeufer, letzte_aktion, filing_datum, daten_alter_tage,
     katalysator_13d (aus 13D/13D-A).
+    v49 (4b) ETF/Index (SPY, IWM, ...): Erkennung ueber cusip_map.is_etf (OpenFIGI-
+    US-Composite-Eintrag mit securityType 'ETP'/'ETF' bzw. marketSector
+    'MarketSector/Market'; ADRs/REITs bleiben bewusst draussen) ODER statische
+    Liste smart_money.etf_ticker (config.yaml).
+    store_quarter speichert ETF-Positionen weiterhin (Transparenz), aber score ignoriert
+    sie: Score 1, keine fonds_kaeufer/verkaeufer, keine letzte_aktion.
 
 (5) overlap: Abgleich mit Screener (ranking-CSV mit status_all/quality/mos_*).
     smart_money_urteil je Ticker: Bestaetigung (Fonds kauft UND Status
     Kandidat/Beobachtung*, oder Fonds verkauft UND Status nein), Divergenz
     (Fonds kauft UND (MoS min < 0 oder Status nein)), Warnung (Fonds
     verkauft/reduziert UND Status Kandidat/Beobachtung), sonst neutral.
+    v49 (4b): ETF/Index-Zeilen stehen weiterhin in der CSV (Abdeckung
+    nachvollziehbar), aber mit Score 1, Urteil neutral und Flag etf=ja
+    (neue Spalte am Ende).
     Ausgabe smart_money_overlap.csv: alle Watchlist-Ticker (--watch CSV,
     Default ticker_watch_v40.csv falls vorhanden) + alle Ticker mit
     Fonds-Aktivitaet.
@@ -437,11 +446,50 @@ def _openfigi_post(http: SecHttp, url: str, payload: bytes) -> bytes:
             raise
 
 
+def _etf_ticker_set(cfg: dict) -> set[str]:
+    """v49 (4b): statische Config-Liste smart_money.etf_ticker (bekannte ETF/Index-Ticker,
+    erweiterbar in config.yaml -- keine Magic Strings im Code)."""
+    return {str(t).strip().upper() for t in (cfg.get("smart_money", {}).get("etf_ticker") or [])
+            if str(t).strip()}
+
+
+def _is_etf_eintrag(e: dict) -> bool:
+    """v49 (4b): OpenFIGI-US-Composite-Eintrag als ETF/Index werten, wenn securityType
+    'ETP' oder 'ETF' ist (live verifiziert: SPY/IWM/QQQ/XLF -> 'ETP', securityType2
+    'Mutual Fund') oder marketSector 'MarketSector/Market'. NICHT einfach
+    securityType != 'Common Stock': ADRs sind 'ADR' (TSM, BABA, SAP, DEO) und REITs
+    'REIT' (AMT, DLR) -- die duerfen nicht als ETF gelten (live gegen OpenFIGI geprueft).
+    (SEC company_tickers.json enthaelt keine ETF-Titel -> dort bewusst KEIN Kriterium.)"""
+    st = str(e.get("securityType") or "").strip()
+    ms = str(e.get("marketSector") or "").strip()
+    return st in ("ETP", "ETF") or ms == "MarketSector/Market"
+
+
+def is_etf_ticker(con: sqlite3.Connection | None, ticker: str, cfg: dict) -> bool:
+    """v49 (4b): ETF/Index? Zwei Quellen: (a) statische Config-Liste smart_money.etf_ticker;
+    (b) cusip_map.is_etf=1 (aus der OpenFIGI-Antwort gesetzt, siehe _is_etf_eintrag)."""
+    t = (ticker or "").strip().upper()
+    if not t:
+        return False
+    if t in _etf_ticker_set(cfg):
+        return True
+    if con is not None:
+        try:
+            row = con.execute("SELECT 1 FROM cusip_map WHERE ticker=? AND is_etf=1 LIMIT 1",
+                              (t,)).fetchone()
+        except sqlite3.OperationalError:
+            row = None  # alte DB ohne Spalte -- connect() migriert additiv per ALTER
+        if row:
+            return True
+    return False
+
+
 def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
                      errors: list | None = None, con: sqlite3.Connection | None = None,
                      unmapped: list | None = None,
                      names: dict[str, str] | None = None,
-                     title_map: dict[str, str] | None = None) -> dict[str, str]:
+                     title_map: dict[str, str] | None = None,
+                     etf: dict[str, bool] | None = None) -> dict[str, str]:
     """v48: CUSIP -> Ticker. Reihenfolge: Tabelle cusip_map (dauerhaft in der DB,
     wird nicht erneut abgefragt), statisches cusip_map (config/Fixtures), dann
     OpenFIGI POST (cusip_map_url) in Chunks -- 5 ohne API-Key, 100 mit
@@ -451,16 +499,31 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
     CUSIPs landen dauerhaft in cusip_map mit quelle 'openfigi' bzw.
     'name_match'. Nicht zuordenbare CUSIPs fehlen im Ergebnis (ticker NULL in
     smart_money_positions) und werden einmalig gesammelt (`unmapped`, bzw. eine
-    Fehlerlog-Zeile), nicht als Einzelzeilen."""
+    Fehlerlog-Zeile), nicht als Einzelzeilen.
+    v49 (4b): optionales out-Param `etf` -- fuellt je CUSIP das ETF/Index-Flag
+    (aus cusip_map.is_etf, der OpenFIGI-Antwort via _is_etf_eintrag oder der
+    Config-Liste etf_ticker); wird IMMER dauerhaft in cusip_map.is_etf gespeichert
+    (unabhaengig vom out-Param, damit fetch_all ohne etf-Param mitpersistiert)."""
     out: dict[str, str] = {}
     quelle: dict[str, str] = {}
+    etf_map = etf if etf is not None else {}   # v49 (4b): immer gefuellt, auch ohne out-Param
+    etf_set = _etf_ticker_set(cfg)
+    has_etf_col = (con is not None
+                   and "is_etf" in {r[1] for r in con.execute("PRAGMA table_info(cusip_map)")})
     cusips = [c for c in dict.fromkeys(cusips) if c]
     if con is not None:
         for c in cusips:
-            row = con.execute("SELECT ticker, quelle FROM cusip_map WHERE cusip=?", (c,)).fetchone()
+            if has_etf_col:
+                row = con.execute("SELECT ticker, quelle, is_etf FROM cusip_map WHERE cusip=?",
+                                  (c,)).fetchone()
+            else:
+                row = con.execute("SELECT ticker, quelle FROM cusip_map WHERE cusip=?",
+                                  (c,)).fetchone()
+                row = (row + (0,)) if row else None
             if row and row[0]:
                 out[c] = str(row[0]).upper()
                 quelle[c] = str(row[1] or "manuell")
+                etf_map[c] = bool(row[2])
     static_map = {str(k): str(v).upper()
                   for k, v in (cfg.get("smart_money", {}).get("cusip_map") or {}).items()}
     rest = []
@@ -470,8 +533,10 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
         if c in static_map:
             out[c] = static_map[c]
             quelle[c] = "manuell"
+            etf_map[c] = static_map[c] in etf_set
         else:
             rest.append(c)
+            etf_map[c] = False
     if rest:
         url = str(cfg.get("smart_money", {}).get("cusip_map_url", ""))
         if url:
@@ -503,9 +568,13 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
                         if t:
                             out[c] = str(t).upper()
                             quelle[c] = "openfigi"
+                            # v49 (4b): ETF-Flag aus dem US-Composite-Eintrag
+                            # (securityType != 'Common Stock' / marketSector 'MarketSector/Market')
+                            etf_map[c] = _is_etf_eintrag(eintrag) or out[c] in etf_set
                 except Exception as exc:
                     logger.warning("OpenFIGI-Mapping fehlgeschlagen (Chunk ab Index %d): %s", i, exc)
     # v48: Fallback nameOfIssuer (normalisiert) gegen Titel aus company_tickers.json
+    # (company_tickers.json enthaelt keine ETF-Titel -> dort kein ETF-Kriterium, nur config etf_ticker)
     if title_map:
         for c in rest:
             if c in out:
@@ -514,14 +583,21 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
             if t:
                 out[c] = t.upper()
                 quelle[c] = "name_match"
+                etf_map[c] = out[c] in etf_set
     miss = [c for c in rest if c not in out]
     if con is not None and rest:
         now = datetime.now().isoformat(timespec="seconds")
         for c in rest:
             if c in out:
-                con.execute(
-                    "INSERT OR REPLACE INTO cusip_map (cusip, ticker, quelle, geladen_am) "
-                    "VALUES (?,?,?,?)", (c, out[c], quelle.get(c, "openfigi"), now))
+                if has_etf_col:  # v49 (4b): is_etf dauerhaft speichern
+                    con.execute(
+                        "INSERT OR REPLACE INTO cusip_map (cusip, ticker, quelle, geladen_am, is_etf) "
+                        "VALUES (?,?,?,?,?)",
+                        (c, out[c], quelle.get(c, "openfigi"), now, int(bool(etf_map.get(c, False)))))
+                else:
+                    con.execute(
+                        "INSERT OR REPLACE INTO cusip_map (cusip, ticker, quelle, geladen_am) "
+                        "VALUES (?,?,?,?)", (c, out[c], quelle.get(c, "openfigi"), now))
         con.commit()
     if miss:
         if unmapped is not None:
@@ -969,6 +1045,13 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     _drop_wenn_veraltet(con, "smart_money_options", OPTIONS_PFLICHT_SPALTEN, _hinweis)
     con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     con.commit()
+    # v49 (4b): additive Migration cusip_map.is_etf (ETF-Flag); frische DBs haben die
+    # Spalte schon aus schema.sql, alte DBs bekommen sie per ALTER (Tabelle muss existieren --
+    # bei veralteter schema.sql greift sonst der Schema-Guard unten mit RuntimeError)
+    cols_cm = {r[1] for r in con.execute("PRAGMA table_info(cusip_map)")}
+    if cols_cm and "is_etf" not in cols_cm:
+        con.execute("ALTER TABLE cusip_map ADD COLUMN is_etf INTEGER NOT NULL DEFAULT 0")
+        con.commit()
     _migrate_positions(con)
     _assert_positions_schema(con)  # v49 (1b/1c): Endverifikation nach connect
     return con
@@ -1409,6 +1492,19 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
 
     con = connect(db_path)
     rows = _rows_for(con, ticker)
+    filing_datum = max((r["filing_datum"] or "") for r in rows) if rows else ""
+    try:
+        daten_alter = (heute - date.fromisoformat(filing_datum[:10])).days if filing_datum else None
+    except ValueError:
+        daten_alter = None
+    # v49 (4b): ETF/Index (config smart_money.etf_ticker oder cusip_map.is_etf) wird
+    # NICHT gescored -- Score 1, keine Kaeufer/Verkaeufer, keine letzte_aktion;
+    # filing_datum/daten_alter_tage bleiben echt (Transparenz, store_quarter speichert weiter)
+    if is_etf_ticker(con, ticker, cfg):
+        return {"score": 1, "fonds_kaeufer": [], "fonds_verkaeufer": [],
+                "letzte_aktion": "", "filing_datum": filing_datum,
+                "daten_alter_tage": daten_alter, "rationale_vorhanden": False,
+                "katalysator_13d": ""}
     empty = {"score": 1, "fonds_kaeufer": [], "fonds_verkaeufer": [],
              "letzte_aktion": "", "filing_datum": "", "daten_alter_tage": None,
              "rationale_vorhanden": False, "katalysator_13d": ""}
@@ -1430,11 +1526,6 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
                          if r["aktion"] in ("verkauft", "reduziert")
                          and (r["aenderung_pct"] is None or r["aenderung_pct"] <= -verk_schw)})
     letzte_aktion = "; ".join(f"{r['fonds']}:{r['aktion']}" for r in last)
-    filing_datum = max((r["filing_datum"] or "") for r in rows)
-    try:
-        daten_alter = (heute - date.fromisoformat(filing_datum[:10])).days if filing_datum else None
-    except ValueError:
-        daten_alter = None
     rat = rationale_exists(con, ticker)
     kat = katalysatoren(con, ticker)
     kat_str = "; ".join(f"{k['fonds']} {k['form']} {k['datum']}" for k in kat)
@@ -1554,6 +1645,9 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
     for t in tickers:
         row = by_t.get(t, {"ticker": t, "status_all": "", "quality": "", "mos_rule": ""})
         sm = smart_money_score(t, cfg, db_path=db_path)
+        # v49 (4b): ETF/Index-Zeile bleibt in der CSV (Abdeckung nachvollziehbar), aber
+        # mit Score 1, Urteil neutral und Flag etf=ja (neue Spalte am Ende)
+        etf_flag = is_etf_ticker(con, t, cfg)
         out.append({
             "ticker": t,
             "status_all": row.get("status_all") or row.get("status") or "",
@@ -1567,7 +1661,8 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
             "daten_alter_tage": sm["daten_alter_tage"] if sm["daten_alter_tage"] is not None else "",
             "katalysator_13d": sm["katalysator_13d"],
             "rationale_vorhanden": "ja" if sm["rationale_vorhanden"] else "nein",
-            "smart_money_urteil": urteil(row, sm),
+            "smart_money_urteil": "neutral" if etf_flag else urteil(row, sm),
+            "etf": "ja" if etf_flag else "",
         })
     cols = list(out[0].keys()) if out else ["ticker"]
     with open(out_path, "w", newline="", encoding="utf-8") as f:
