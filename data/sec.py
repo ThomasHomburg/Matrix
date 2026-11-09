@@ -67,7 +67,7 @@ def _cik_for_ticker(ticker: str) -> str | None:
 
 
 _UA_CACHE = {"ua": None}
-# v32: Rate-Limit -- Zeitstempel des letzten SEC-Requests (max. N pro Sekunde)
+# Rate-Limit -- Zeitstempel des letzten SEC-Requests (max. N pro Sekunde)
 _LAST_REQ = {"t": 0.0}
 _MAX_RPS = {"v": 5.0}
 
@@ -77,7 +77,7 @@ def _user_agent_default() -> str:
 
 
 def _rate_limit() -> None:
-    """v32: wartet, bis der Mindestabstand 1/max_requests_per_second seit dem
+    """wartet, bis der Mindestabstand 1/max_requests_per_second seit dem
     letzten SEC-Request vergangen ist (default 5/s -> 0,2 s)."""
     import time as _time
     min_gap = 1.0 / max(0.1, _MAX_RPS["v"])
@@ -155,7 +155,7 @@ def sec_check(m: TickerMetrics, cfg: dict) -> SecCheckResult:
     tol = float(sec_cfg.get("tolerance", 0.05))
     user_agent = str(sec_cfg.get("user_agent") or _user_agent_default())
     _UA_CACHE["ua"] = user_agent
-    # v32: Rate-Limit aus config (default 5/s)
+    # Rate-Limit aus config (default 5/s)
     _MAX_RPS["v"] = float(sec_cfg.get("max_requests_per_second", 5.0))
 
     country = (m.country or "").upper()
@@ -204,7 +204,7 @@ def sec_check(m: TickerMetrics, cfg: dict) -> SecCheckResult:
 
 
 def sec_sbc_fallback(m: TickerMetrics, cfg: dict) -> tuple[float | None, int | None, str]:
-    """v35: SBC-Fallback aus SEC-EDGAR (US-Ticker).
+    """SBC-Fallback aus SEC-EDGAR (US-Ticker).
 
     Wenn der Provider (Yahoo/FMP) fuer ein Geschaeftsjahr keine
     Aktienverguetung (SBC) liefert, wird der XBRL-Tag ShareBasedCompensation
@@ -244,7 +244,7 @@ def sec_sbc_fallback(m: TickerMetrics, cfg: dict) -> tuple[float | None, int | N
 
 
 def sec_sbc_fallback_all(m: TickerMetrics, cfg: dict) -> list[tuple[int, float, str]]:
-    """v35: SBC-Fallback aus SEC-EDGAR fuer ALLE Jahre ohne Yahoo-SBC.
+    """SBC-Fallback aus SEC-EDGAR fuer ALLE Jahre ohne Yahoo-SBC.
 
     companyfacts wird nur EINMAL geladen; fuer jedes Geschaeftsjahr, in dem
     der Provider keine SBC (stock_based_compensation / fcf_sbc) liefert,
@@ -284,7 +284,7 @@ def sec_sbc_fallback_all(m: TickerMetrics, cfg: dict) -> list[tuple[int, float, 
 
 
 def format_sec_detail(deviations: list, ocf_by_fy: dict | None = None) -> str:
-    """v35/v37: SEC-Abweichungen kompakt als Text: Feld, Jahr, Prozent.
+    """SEC-Abweichungen kompakt als Text: Feld, Jahr, Prozent.
 
     deviations: [{fy, key, ours, sec, dev}] aus SecCheckResult. Beispiel:
     "OCF FY2024 +6.2%; Capex FY2023 -12.0%". Nur Abweichungen ueber dem

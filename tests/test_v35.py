@@ -132,7 +132,7 @@ def test_sonderregel_quality_na_unter_70_prozent(cfg):
     # n/a-Kriterien: roic_avg5, net_debt_ebitda, fcf_positive_years, fcf_margin_avg5,
     # fcf_yield_sbc_avg3, mos_base -> Abdeckung deutlich < 70 %
     assert res["coverage"] < 0.70
-    assert math.isnan(res["quality"])  # v35: Quality n/a bei Abdeckung < min_coverage_quality
+    assert math.isnan(res["quality"])  # Quality n/a bei Abdeckung < min_coverage_quality
 
 
 # ---------- (2) Pruefstatus nur bei Quality >= 60 UND MoS >= 30 % ----------
@@ -302,7 +302,7 @@ def test_datenqualitaet_je_ticker(cfg):
     cfg2 = dict(cfg)
     cfg2["sec"] = {"enabled": False}
     m = _mk(ticker="XOM", industry="Oil & Gas Integrated")
-    for fy in m.years:  # v36: Provider liefert das Jahr (Statement-Spalte vorhanden)
+    for fy in m.years:  # Provider liefert das Jahr (Statement-Spalte vorhanden)
         m.fiscal_ends[fy] = f"{fy}-12-31"
     # Datenluecke erzeugen: FY2023 ohne ebit
     m.years[2023]["ebit"] = Metric("ebit", float("nan"), "USD", "USD", 2023)

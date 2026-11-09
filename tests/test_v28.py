@@ -72,18 +72,18 @@ def test_industry_nicht_sector_pypl_visa_mastercard_keine_banken(cfg):
         assert sector_rule(m, cfg).group == "standard"
 
 def test_banken_und_versicherer_ueber_industry(cfg):
-    """v28: Industry statt Sector. v35: Banks*/Insurance*/Capital Markets sind
+    """Industry statt Sector. v35: Banks*/Insurance*/Capital Markets sind
     jetzt Sektor-Sonderregel ('special'); v38: Asset Management ist AUCH
     Sonderregel. Diversified Financial Services / Mortgage Finance bleiben
     'financials' (ROE/P-B/Div-Yield)."""
     for ind in ("Diversified Financial Services", "Mortgage Finance"):
         m = _mk(industry=ind, sector="Financial Services")
         assert sector_rule(m, cfg).group == "financials", ind
-    # v38 (3): Asset Management -> Sonderregel (wie Banken/Versicherer)
+    # Asset Management -> Sonderregel (wie Banken/Versicherer)
     for ind in ("Asset Management",):
         m = _mk(industry=ind, sector="Financial Services")
         assert sector_rule(m, cfg).group == "special", ind
-    # v35: Banken/Versicherer/Capital Markets -> Sonderregel
+    # Banken/Versicherer/Capital Markets -> Sonderregel
     for ind in ("Banks - Diversified", "Banks - Regional",
                 "Insurance - Property & Casualty", "Insurance - Life",
                 "Capital Markets"):
@@ -100,7 +100,7 @@ def test_zykliker_ueber_industry(cfg):
         assert rule.normalized_earnings_years == 7
 
 def test_reits_ueber_industry_prefix(cfg):
-    """v28: REITs am Industry-Praefix erkannt. v35: REIT - * ist jetzt
+    """REITs am Industry-Praefix erkannt. v35: REIT - * ist jetzt
     Sektor-Sonderregel ('special') -- DCF/FCF-Yield nicht berechnet."""
     for ind in ("REIT - Industrial", "REIT - Retail", "REIT - Residential",
                 "REIT - Specialty", "REIT - Office"):
@@ -156,7 +156,7 @@ def test_zykliker_flag_weniger_als_7_jahre(cfg):
     assert out["row"]["normalized_earnings_years"] == 5
 
 def test_reit_ffo_yield_statt_fcf_yield(cfg):
-    """v35: REIT - * ist Sektor-Sonderregel -> FCF-Yield/MoS n/a, Status
+    """REIT - * ist Sektor-Sonderregel -> FCF-Yield/MoS n/a, Status
     'Sonderregel noetig' (FFO-Bewertung erfolgt manuell)."""
     cfg_off = dict(cfg)
     cfg_off["sec"] = {"enabled": False}
@@ -171,7 +171,7 @@ def test_reit_ffo_yield_statt_fcf_yield(cfg):
     assert crits["mos_base"].is_na
 
 def test_reit_ohne_ffo_fcf_yield_na_und_hinweis(cfg):
-    """v35: REIT - * -> Sonderregel; FCF-Yield und MoS n/a (nie Roh-FCF)."""
+    """REIT - * -> Sonderregel; FCF-Yield und MoS n/a (nie Roh-FCF)."""
     m = _mk(industry="REIT - Retail", sector="Real Estate")
     rule = sector_rule(m, cfg)
     assert rule.group == "special"
@@ -221,11 +221,11 @@ def test_ausgeschlossene_ticker_mit_grund(cfg):
     for e in excluded:
         assert e["ticker"] and e["name"] and e["reasons"]
     tickers_ex = {e["ticker"] for e in excluded}
-    # v38: DIST (negatives EK) wird nicht mehr wegen EK ausgeschlossen, sondern
+    # DIST (negatives EK) wird nicht mehr wegen EK ausgeschlossen, sondern
     # wegen Value-Trap (sinkender Umsatz); MICR wegen Marktkap.
     assert tickers_ex == {"DIST", "MICR"}
     gruende = {e["ticker"]: "; ".join(e["reasons"]) for e in excluded}
-    assert "Durchschnitts-FCF" in gruende["DIST"]  # v38: nicht mehr EK, sondern neg. O-FCF
+    assert "Durchschnitts-FCF" in gruende["DIST"]  # nicht mehr EK, sondern neg. O-FCF
     assert "Marktkap" in gruende["MICR"]
 
 

@@ -129,7 +129,7 @@ def test_value_na_below_coverage_70(cfg):
     res = score_ticker(crits, cfg["criteria"], cfg.get("score_groups"))
     assert res["coverage"] < 0.70
     assert math.isnan(res["value"]), f"Value muss n/a sein bei coverage={res['coverage']}"
-    # v35: Quality wird ebenfalls n/a, wenn Abdeckung < min_coverage_quality (70 %)
+    # Quality wird ebenfalls n/a, wenn Abdeckung < min_coverage_quality (70 %)
     assert math.isnan(res["quality"]), f"v35: Quality n/a bei coverage={res['coverage']}"
 
 

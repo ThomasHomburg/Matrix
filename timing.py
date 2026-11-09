@@ -1,4 +1,4 @@
-"""v41 (4): Timing-Kennzahlen aus 2 Jahren Tageskursen je Ticker (timing.py).
+"""Timing-Kennzahlen aus 2 Jahren Tageskursen je Ticker (timing.py).
 
 Reines Auswertungsmodul -- aendert die Screener-Logik nicht.
 

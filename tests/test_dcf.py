@@ -104,7 +104,7 @@ def test_dcf_nan_ohne_marktkap():
 
 
 def test_is_buy_candidate_regeln():
-    """v21: Kandidatenregel = Quality >= 60 (statt Score >= 70) + MoS + Bear."""
+    """Kandidatenregel = Quality >= 60 (statt Score >= 70) + MoS + Bear."""
     res = compute_dcf(_ticker(), DCF_CFG)   # MoS Base = 36,3 %
     price = 100.0
     # Quality 75, MoS 36 %, Bear-Wert?

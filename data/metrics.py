@@ -55,7 +55,7 @@ def _nan(*vals: float) -> bool:
 def tax_rate(m: TickerMetrics, fy: int) -> float:
     """Effektiver Steuersatz = Steueraufwand / Vorsteuergewinn.
 
-    v27: begrenzt auf `data.tax_rate_min`..`data.tax_rate_max` (0-35 %).
+    begrenzt auf `data.tax_rate_min`..`data.tax_rate_max` (0-35 %).
     Ausserhalb davon und bei Vorsteuerverlust (pretax <= 0) gilt der
     Normsteuersatz `data.tax_rate_norm` (21 %). Fehlende Daten -> NaN.
     """
@@ -77,7 +77,7 @@ def tax_rate(m: TickerMetrics, fy: int) -> float:
 def nopat(m: TickerMetrics, fy: int) -> float:
     """NOPAT = EBIT * (1 - Steuersatz).
 
-    v27: Bei EBIT <= 0 ist NOPAT = EBIT (kein Steuervorteil im Verlustjahr),
+    Bei EBIT <= 0 ist NOPAT = EBIT (kein Steuervorteil im Verlustjahr),
     damit gilt immer NOPAT <= EBIT fuer EBIT > 0 (Steuersatz >= 0 begrenzt).
     """
     ebit = m.years.get(fy, {}).get("ebit")
@@ -103,7 +103,7 @@ def invested_capital(m: TickerMetrics, fy: int) -> float:
 
 
 def invested_capital_ek_le0(m: TickerMetrics, fy: int) -> float:
-    """v38 (1): Nenner bei Eigenkapital <= 0: investiertes Kapital = Schulden +
+    """Nenner bei Eigenkapital <= 0: investiertes Kapital = Schulden +
     Eigenkapital (statt nur EK + ND, das bei negativem EK klein/negativ waere).
     Auch das <= 0 -> NaN (ROIC dann n/a)."""
     y = m.years.get(fy, {})
@@ -126,7 +126,7 @@ def invested_capital_ek_le0(m: TickerMetrics, fy: int) -> float:
 def roic(m: TickerMetrics, fy: int) -> float:
     """ROIC = NOPAT / investiertes Kapital (Jahresende).
 
-    v38 (1): bei Eigenkapital <= 0 ist EK + ND als Nenner verzerrt; dann wird
+    bei Eigenkapital <= 0 ist EK + ND als Nenner verzerrt; dann wird
     Schulden + Eigenkapital verwendet (invested_capital_ek_le0); auch das <= 0
     -> NaN."""
     y = m.years.get(fy, {})
@@ -196,7 +196,7 @@ def fcf_yield_raw(m: TickerMetrics, fy: int) -> float:
 def roe(m: TickerMetrics, fy: int) -> float:
     """ROE = Nettogewinn / Eigenkapital (Banken-Ersatz fuer ROIC).
 
-    v38 (1): Eigenkapital <= 0 -> NaN (Jahr wird n/a, nicht 0 Punkte)."""
+    Eigenkapital <= 0 -> NaN (Jahr wird n/a, nicht 0 Punkte)."""
     ni = m.years.get(fy, {}).get("net_income")
     eq = m.years.get(fy, {}).get("equity")
     if ni is None or eq is None or _nan(ni.value, eq.value) or eq.value <= 0:

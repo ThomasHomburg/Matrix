@@ -1,4 +1,4 @@
-"""v27 (1): ROIC-Steuersatz-Begrenzung.
+"""ROIC-Steuersatz-Begrenzung.
 
 - Effektiver Steuersatz begrenzt auf 0-35 % (config.yaml data.tax_rate_min/max);
   ausserhalb davon und bei Vorsteuerverlust gilt der Normsteuersatz

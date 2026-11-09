@@ -1,4 +1,4 @@
-"""Tests fuer v27 (2)-(5):
+"""Tests fuer ROIC-Steuersatz-Begrenzung und Folge-Features:
 (2) DCF-Modus ttm_only (reiner TTM-Start-FCF nach SBC, ohne O);
     bisheriger TTM-Modus heisst TTM O (Ø TTM + 2 nicht ueberlappende GJ).
 (3) Zwei Stufen in der Rangliste: "Kandidat" (min der Modi >= 30 %,
@@ -134,7 +134,7 @@ def _mk_watch(fcf_by_fy: dict, mcap: float, shares: float = 2e9) -> TickerMetric
     for fy in sorted(fcf_by_fy):
         rev *= 1.10
         m.years[fy] = {
-            "fcf": Metric("fcf", fcf_by_fy[fy] + 0.02 * rev, "USD", "USD", fy),  # v37: fcf passend zu fcf_sbc
+            "fcf": Metric("fcf", fcf_by_fy[fy] + 0.02 * rev, "USD", "USD", fy),  # fcf passend zu fcf_sbc
             "fcf_sbc": Metric("fcf_sbc", fcf_by_fy[fy], "USD", "USD", fy),
             "revenue": Metric("revenue", rev, "USD", "USD", fy),
             "gross_profit": Metric("gross_profit", 0.6 * rev, "USD", "USD", fy),
@@ -147,7 +147,7 @@ def _mk_watch(fcf_by_fy: dict, mcap: float, shares: float = 2e9) -> TickerMetric
             "shares_diluted": Metric("shares_diluted", shares, "shares", "USD", fy),
             "equity": Metric("equity", 80e9, "USD", "USD", fy),
             "net_debt": Metric("net_debt", 5e9, "USD", "USD", fy),
-            # v37: Steuerfelder fuer NOPAT/ROIC + Zinsaufwand fuer Zinsdeckung
+            # Steuerfelder fuer NOPAT/ROIC + Zinsaufwand fuer Zinsdeckung
             "income_tax_expense": Metric("income_tax_expense", 0.05 * rev, "USD", "USD", fy),
             "income_before_tax": Metric("income_before_tax", 0.25 * rev, "USD", "USD", fy),
             "interest_expense": Metric("interest_expense", 0.01 * rev, "USD", "USD", fy),

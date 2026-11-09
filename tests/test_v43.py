@@ -44,11 +44,11 @@ def _cfg():
         {"name": "Starboard Value", "cik": "0009999999", "typ": "aktivist", "gewicht": 0.0,
          "positions_soll_max": 30},
     ]
-    # v44: Namensvarianten-Test separat in test_v44 (hier soll Starboard gefetcht werden)
+    # Namensvarianten-Test separat in test_
     sm["name_variants"] = {"Starboard Value": ["Starboard Value"]}
     sm["cusip_map"] = {v: k for k, v in CUSIP.items()}
     sm["max_requests_per_second"] = 100000
-    sm.pop("user_agent", None)  # v44: Fallback auf sec.user_agent ("Tom Homburg t09homburg@gmail.com")
+    sm.pop("user_agent", None)  # Fallback auf sec.user_agent ("Tom Homburg t09homburg@gmail.com")
     cfg["smart_money"] = sm
     return cfg
 
@@ -111,10 +111,10 @@ OPTIONS = {"1067983": (1, [("111111111", "AAA Corp", "CALL", 100.0, 10.0)])}  # 
 def _make_fetcher():
     def fetcher(url: str) -> bytes:
         if "efts.sec.gov" in url:
-            # v43-alt; v44 nutzt browse-edgar getcompany -- hier leer
+            # alt; browse-edgar getcompany -- hier leer
             return json.dumps({"hits": {"hits": []}}).encode()
         if "submissions/CIK" in url:
-            # v45: submissions/CIK##########.json ist primaere Filing-Liste
+            # submissions/CIK##########.json ist primaere Filing-Liste
             # (filings.recent: accessionNumber, form, filingDate, reportDate)
             cik10 = url.split("submissions/CIK")[1].split(".")[0]
             names = {"0001067983": "BERKSHIRE HATHAWAY INC",
@@ -150,7 +150,7 @@ def _make_fetcher():
                                                       "form": ["10-K"],
                                                       "reportDate": ["2024-12-31"]}}}).encode()
         if "action=getcompany&company=" in url:
-            # v44 Firmensuche: Starboard -> zwei Kandidaten (kein Auto-Pick)
+            # Firmensuche: Starboard -> zwei Kandidaten (kein Auto-Pick)
             import urllib.parse as _up
             q = _up.parse_qs(_up.urlparse(url).query)["company"][0]
             if "starboard" in q.lower():
@@ -205,7 +205,7 @@ def sm_db(tmp_path):
     db = tmp_path / "sm.db"
     report = []
     errors = smart_money.fetch_all(cfg, quarters=2, db_path=db, fetcher=_make_fetcher(), report=report)
-    # v44: Fonds ohne CIK sind 'manuell eintragen' (kein harter Fehler mehr)
+    # Fonds ohne CIK sind 'manuell eintragen' (kein harter Fehler mehr)
     assert not [e for e in errors if e.get("fonds") and "manuell" not in e["error"]], errors
     return cfg, db, report
 
@@ -306,7 +306,7 @@ def test_score_4_zwei_quartale_plus_rationale(sm_db, tmp_path):
                 "VALUES ('AAA', 'Buffett erhoeht', 'https://example.com/b', '2025-09-01', 'Brief')")
     con.commit()
     s = smart_money.smart_money_score("AAA", cfg, db_path=db)
-    # v49: Q1 (aelteste geladene Periode) ist aktion="basis" -> Score-4 (zwei aufeinanderfolgende
+    # Q1 (aelteste geladene Periode) ist aktion="basis" -> Score-4 (zwei aufeinanderfolgende
     # Quartale mit cond3) greift nicht; Q2 erhoeht Berkshire+Pershing (gew 2.0 -> cond3) -> 3,
     # dann -1 Duquesne (reduziert -40 %) -> 2
     assert s["score"] == 2
@@ -375,7 +375,7 @@ def test_overlap_csv(sm_db, tmp_path):
     watch = tmp_path / "watch.csv"
     watch.write_text("ticker\nAAA\nKAT\n", encoding="utf-8")
     out = tmp_path / "smart_money_overlap.csv"
-    # v49: Fixture-DB hat nur 2 Perioden je Fonds -> Vollstaendigkeitsschutz wuerde abbrechen;
+    # Fixture-DB hat nur 2 Perioden je Fonds -> Vollstaendigkeitsschutz wuerde abbrechen;
     # hier mit force=True (Abbruch selbst wird in test_v49 geprueft)
     rows = smart_money.overlap(str(ranking), str(watch), cfg, db_path=db, out_path=str(out), force=True)
     by = {r["ticker"]: r for r in rows}
@@ -401,7 +401,7 @@ def test_cik_aufloesung(sm_db):
     assert by["Berkshire Hathaway"]["cik"] == "0001067983"
     assert by["Berkshire Hathaway"]["filer_status"] == "13F-HR (config)"
     assert by["Berkshire Hathaway"]["bericht_name"] == "BERKSHIRE HATHAWAY INC"
-    assert by["Berkshire Hathaway"]["last_13f_hr"] == "2025-08-20"  # v45: 13F-HR/A-Nachmeldung, neueste filing_date gewinnt
+    assert by["Berkshire Hathaway"]["last_13f_hr"] == "2025-08-20"  # 13F-HR/A-Nachmeldung, neueste filing_date gewinnt
     # Starboard hat CIK in config -> validiert
     sb = by["Starboard Value"]
     assert sb["cik"] == "0009999999"
@@ -429,7 +429,7 @@ def test_attach_smart_money_watchlist(sm_db, tmp_path):
 # --- Rationale-Import: Pflicht quelle_url ---------------------------------------
 
 def test_rationale_import_pflicht_quelle(sm_db, tmp_path, capsys):
-    # v49 (5): schaerfere Validierung -- fehlt text oder quelle_url, bricht der Import mit
+    # schaerfere Validierung -- fehlt text oder quelle_url, bricht der Import mit
     # Fehlerliste (Zeilennummer + fehlendes Feld) ab und importiert NICHTS (kein Teil-Import)
     cfg, db, _ = sm_db
     csv_file = tmp_path / "rationale_import.csv"

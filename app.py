@@ -84,13 +84,13 @@ def _fmt_pct(v: float) -> str:
 
 
 def _fmt_mos(v: float, le0: bool = False, special: bool = False) -> str:
-    # v33: Start-FCF <= 0 -> "Start-FCF <= 0" statt n/a
+    # Start-FCF <= 0 -> "Start-FCF <= 0" statt n/a
     if le0:
         return "Start-FCF ≤ 0"
-    # v35: Sektor-Sonderregel -> DCF nicht berechnet
+    # Sektor-Sonderregel -> DCF nicht berechnet
     if special:
         return "n/a (Sonderregel)"
-    # v34: MoS unter -100 % -> "< -100 %"
+    # MoS unter -100 % -> "< -100 %"
     if v == v and v < -1.0:
         return "< −100 %"
     return "n/a" if (v != v) else f"{v:.1%}"
@@ -151,15 +151,15 @@ def page_ranking() -> None:
     view["EV/EBIT rel."] = view["ev_ebit_med"].map(lambda v: "n/a" if math.isnan(v) else f"{v:.1f}")
     view["MoS (Base)"] = view.apply(
         lambda r: _fmt_mos(r["margin_of_safety"], bool(r.get("dcf_fcf_le0", False)),
-                           bool(r.get("sector_special", False))), axis=1)  # v33: Start-FCF <= 0; v35: Sonderregel
-    # v36 (4): MoS bei erhoehtem Diskontsatz (Base, aktiver Modus) -- Robustheit
+                           bool(r.get("sector_special", False))), axis=1)  # Start-FCF <= 0; v35: Sonderregel
+    # MoS bei erhoehtem Diskontsatz (Base, aktiver Modus) -- Robustheit
     _rrate = float(CFG.get("dcf", {}).get("robust_discount_rate", 0.10))
     view[f"MoS bei {_rrate:.0%}"] = view.apply(
         lambda r: _fmt_mos(r.get("mos_robust", float("nan")),
                            bool(r.get("dcf_fcf_le0", False)),
                            bool(r.get("sector_special", False))), axis=1)
-    # v27: MoS (Base) je Startwert nebeneinander (Ø3J / jüngstes GJ / TTM Ø / TTM)
-    # v35: Sektor-Sonderregel -> "n/a (Sonderregel)" statt n/a
+    # MoS (Base) je Startwert nebeneinander (Ø3J / jüngstes GJ / TTM Ø / TTM)
+    # Sektor-Sonderregel -> "n/a (Sonderregel)" statt n/a
     _sp = view["sector_special"].fillna(False).astype(bool) if "sector_special" in view else False
     view["MoS Ø3J"] = [
         "n/a (Sonderregel)" if sp else _fmt_pct(v)
@@ -173,11 +173,11 @@ def page_ranking() -> None:
     view["MoS TTM"] = [
         "n/a (Sonderregel)" if sp else _fmt_pct(v)
         for sp, v in zip(view["sector_special"].fillna(False), view["mos_ttm_only"])]
-    # v27: Zwei Stufen -- Kandidat / Beobachtung (mit entscheidendem Modus)
+    # Zwei Stufen -- Kandidat / Beobachtung (mit entscheidendem Modus)
     view["Status"] = view["status"].map(lambda v: str(v))
-    # v30: Status unter beiden Kandidatenregeln nebeneinander
+    # Status unter beiden Kandidatenregeln nebeneinander
     # (candidate_mode aus config.yaml bestimmt die aktive Regel = Spalte "Status")
-    # v34: Kandidaten-Labels -- "Kandidat (streng)" = alle Modi, "Kandidat (aktuell)" = juengste 2
+    # Kandidaten-Labels -- "Kandidat (streng)" = alle Modi, "Kandidat (aktuell)" = juengste 2
     view["Status (alle Modi)"] = view["status_all"].map(
         lambda v: "Kandidat (streng)" if v == "Kandidat" else str(v))
     view["Status (jüngste 2)"] = view["status_recent2"].map(
@@ -192,14 +192,14 @@ def page_ranking() -> None:
         lbl = _active_label if v == "Kandidat" else v
         mr = r.get("mos_robust", float("nan"))
         if mr == mr and mr >= _mos_min and not bool(r.get("sector_special", False)):
-            return f"{lbl} (robust)"  # v36: MoS bei 10 % >= 30 %
+            return f"{lbl} (robust)"  # MoS bei 10 % >= 30 %
         return lbl
     view["Status"] = view.apply(_status_robust, axis=1)
-    # v28: SEC-EDGAR-Abgleich in der Rangliste sichtbar (US-Ticker)
+    # SEC-EDGAR-Abgleich in der Rangliste sichtbar (US-Ticker)
     def _sec_col(r):
         if r["sec_check_flag"]:
             detail = (r.get("sec_detail") or "").strip()
-            # v35: Detail (Feld/Jahr/%) in der Zelle; im Tooltip vollstaendig
+            # Detail (Feld/Jahr/%) in der Zelle; im Tooltip vollstaendig
             return "⚠ Quellen weichen ab" + (f" ({detail})" if detail else "")
         if r["sec_check_ok"]:
             return "ok"
@@ -210,7 +210,7 @@ def page_ranking() -> None:
             return "n/a (kein US)"
         return "n/a"
     view["SEC"] = df.apply(_sec_col, axis=1)
-    # v26: MoS (Base) mit alternativer Nettoverschuldung; v35: Sonderregel -> "n/a (Sonderregel)"
+    # MoS (Base) mit alternativer Nettoverschuldung; v35: Sonderregel -> "n/a (Sonderregel)"
     _sp = view["sector_special"].fillna(False)
     view["MoS alt. ND"] = ["n/a (Sonderregel)" if sp else _fmt_pct(v)
                            for sp, v in zip(_sp, view["mos_base_alt_nd"])]
@@ -220,19 +220,19 @@ def page_ranking() -> None:
                         for sp, v in zip(_sp, view["mos_bull"])]
     view["Kandidat"] = view["kandidat"].map(lambda v: str(v))
     view["Datenabdeckung"] = view["coverage"].map(lambda v: "n/a" if (v != v) else f"{v:.1%}")
-    # v33: Value als "n/a", wenn Datenabdeckung < score_groups.min_coverage_value
+    # Value als "n/a", wenn Datenabdeckung < score_groups.min_coverage_value
     min_cov = float(CFG.get("score_groups", {}).get("min_coverage_value", 0.70))
     view["Value"] = view.apply(
         lambda r: "n/a" if (r["value"] != r["value"]
                             or (r["coverage"] == r["coverage"] and r["coverage"] < min_cov))
         else f"{r['value']:.1f}", axis=1)
-    # v35: Quality als "n/a", wenn Datenabdeckung < score_groups.min_coverage_quality
+    # Quality als "n/a", wenn Datenabdeckung < score_groups.min_coverage_quality
     min_cov_q = float(CFG.get("score_groups", {}).get("min_coverage_quality", 0.70))
     view["Quality"] = view.apply(
         lambda r: "n/a" if (r["quality"] != r["quality"]
                             or (r.get("quality_coverage", r["coverage"]) == r.get("quality_coverage", r["coverage"])
                                 and r.get("quality_coverage", r["coverage"]) < min_cov_q))
-        else f"{r['quality']:.1f}", axis=1)  # v37: Quality-Abdeckung nur Quality-Bloecke
+        else f"{r['quality']:.1f}", axis=1)  # Quality-Abdeckung nur Quality-Bloecke
     view = view.rename(columns={"ticker": "Ticker", "name": "Name", "sector": "Sektor",
                                 "source": "Quelle", "score": "Score",
                                 "flags": "Flags"})
@@ -242,8 +242,8 @@ def page_ranking() -> None:
                  "MoS (Base)", f"MoS bei {_rrate:.0%}", "MoS Ø3J", "MoS jüngstes GJ", "MoS TTM Ø", "MoS TTM", "MoS alt. ND",
                  "MoS Bear", "MoS Bull", "Status", "Status (alle Modi)", "Status (jüngste 2)",
                  "Kandidat", "SEC", "Flags"]
-    # v27: Standard-Sortierung: Kandidat zuerst, dann Beobachtung, dann MoS (Base) absteigend
-    # v34: beide Kandidaten-Labels zaehlen als Kandidat (streng/aktuell)
+    # Standard-Sortierung: Kandidat zuerst, dann Beobachtung, dann MoS (Base) absteigend
+    # beide Kandidaten-Labels zaehlen als Kandidat (streng/aktuell)
     view["_kauf"] = view["status"].isin(["Kandidat"]).astype(int)
     view["_watch"] = (view["Status"] == "Beobachtung").astype(int)
     view["_mos"] = pd.to_numeric(
@@ -253,11 +253,11 @@ def page_ranking() -> None:
     view = view[show_cols]
     st.caption(f"{len(view)} bewertet, {len(excluded)} ausgeschlossen "
                f"({total_tickers} Ticker gesamt, {len(view)} nach Filter)")
-    # v28: Ausgeschlossene Ticker als Tabelle MIT GRUND direkt unter der Rangliste
+    # Ausgeschlossene Ticker als Tabelle MIT GRUND direkt unter der Rangliste
     # (nicht im Expander versteckt)
     if excluded:
         st.markdown(f"**Ausgeschlossene Ticker ({len(excluded)}, harte Filter)**")
-        # v29: gezahlte Jahre (mit tatsaechlichen Werten, nicht Spalten) je Ticker
+        # gezahlte Jahre (mit tatsaechlichen Werten, nicht Spalten) je Ticker
         excl_rows = [{
             "Ticker": e["ticker"],
             "Name": e["name"],
@@ -442,7 +442,7 @@ def page_scorecard() -> None:
         st.caption(f"'Daten dünn (x J.)' = weniger als {CFG['data'].get('thin_years', 5)} Jahre Daten "
                    f"(Fenster: {CFG['data'].get('years', 5)} J.) – Score-Aussage eingeschränkt.")
 
-    # v28: Sektorgruppe (Industry-basiert) + Sektor-Hinweis
+    # Sektorgruppe (Industry-basiert) + Sektor-Hinweis
     sg = res["row"].get("sector_group", "standard")
     sg_label = {"financials": "Bank/Versicherer", "cyclicals": "Zykliker",
                 "reits": "REIT", "standard": "Standard"}.get(sg, sg)
@@ -580,8 +580,8 @@ def page_scorecard() -> None:
     st.subheader("DCF – Innerer Wert je Aktie (3 Szenarien)")
     dcf_section(m, res["row"])
 
-    # v26: die letzten Quartale (OCF, Capex, SBC, FCF − SBC) mit Stichtag;
-    # v30: 8 Quartale (4 aktuelle + 4 Vorjahresquartale) + YoY je Quartal
+    # die letzten Quartale (OCF, Capex, SBC, FCF − SBC) mit Stichtag;
+    # 8 Quartale (4 aktuelle + 4 Vorjahresquartale) + YoY je Quartal
     ttm_obj = getattr(m, "ttm", None)
     if ttm_obj is not None and getattr(ttm_obj, "quarters", None):
         st.subheader("Letzte 8 Quartale (Cashflow, mit Stichtag und YoY)")
@@ -600,7 +600,7 @@ def page_scorecard() -> None:
                 f"FCF − SBC (Mrd. {cur_q})": _qb(q["fcf_sbc"]),
                 "YoY je Quartal (FCF − SBC)": _qp(q.get("yoy", float("nan"))),
             })
-        # v29: Summenzeile ueber die 4 AKTUELLEN Quartale -- muss dem TTM entsprechen
+        # Summenzeile ueber die 4 AKTUELLEN Quartale -- muss dem TTM entsprechen
         def _qs(*vals) -> str:
             if all(v == v for v in vals):
                 return f"{sum(vals) / 1e9:,.2f}"
@@ -966,7 +966,7 @@ def dcf_section(m: TickerMetrics, row: dict | None) -> None:
     # --- Nettoverschuldung, Aktien, innerer Wert je Aktie, Kurs, MoS ---
     # Nettoverschuldung OHNE Kundengelder (wie im DCF verwendet);
     # Kundengelder (z. B. PYPL) sitzen in Cash und werden hinzuaddiert.
-    # v26: umschaltbar (config `dcf.net_debt_mode`) — gemeldet vs.
+    # umschaltbar (config `dcf.net_debt_mode`) — gemeldet vs.
     # Schulden − (Cash + kurzfristige Anlagen); beide MoS nebeneinander.
     nd_val = dcf.net_debt
     nd_s = "n/a"
@@ -1014,7 +1014,7 @@ def dcf_section(m: TickerMetrics, row: dict | None) -> None:
     st.write(f"**Kurs:** {'n/a' if price is None else f'{price:,.2f} {cur}'} · "
              f"**Margin of Safety (Base):** {'n/a' if mos != mos else f'{mos:.1%}'}")
 
-    # v26: Nettoverschuldung umschaltbar — beide Varianten + MoS nebeneinander
+    # Nettoverschuldung umschaltbar — beide Varianten + MoS nebeneinander
     st.markdown("**Nettoverschuldung (umschaltbar) und MoS (Base) je Variante**")
     nd_mode_rows = [{
         "Variante": ("gemeldet (Net Debt)" if dcf.net_debt_mode == "reported"
@@ -1126,7 +1126,7 @@ def dcf_section(m: TickerMetrics, row: dict | None) -> None:
 # --- Seite 3: Matrix (Quality vs. Value) -------------------------------------
 
 def page_matrix() -> None:
-    """v31: Streudiagramm Quality (x) vs. MoS Base (y = Minimum der Modi).
+    """Streudiagramm Quality (x) vs. MoS Base (y = Minimum der Modi).
 
     Farbe nach Status: Kandidat gruen, Beobachtung blau, sonst grau.
     y-Achse auf -100 % begrenzt. Hilfslinien bei Quality = buy_quality_min und
@@ -1164,13 +1164,13 @@ def page_matrix() -> None:
         st.info("Keine Ticker mit MoS verfuegbar.")
         return
 
-    # v31: Farbe nach Status (aktive Regel = Spalte "status")
+    # Farbe nach Status (aktive Regel = Spalte "status")
     def _status_color(r):
         if r.get("status") == "Kandidat":
             return "Kandidat"
         if r.get("status") == "Beobachtung":
             return "Beobachtung"
-        # v34: "Pruefen (SBC fehlt)" und alles andere -> grau
+        # "Pruefen (SBC fehlt)" und alles andere -> grau
         return "nein"
     df["status_cat"] = df.apply(_status_color, axis=1)
     color_scale = alt.Scale(domain=["Kandidat", "Beobachtung", "nein"],
@@ -1293,7 +1293,7 @@ def page_import() -> None:
             st.session_state.pop("live_tickers", None)
             st.rerun()
 
-    # v28 (Schritt 8): Universumslader -- S&P 500 (Wikipedia -> tickers_sp500.csv)
+    # Universumslader -- S&P 500 (Wikipedia -> tickers_sp500.csv)
     # und STOXX 600 (CSV-Import). Abruf in Batches mit Fortschrittsanzeige,
     # Wiederaufnahme nach Abbruch, Fehlerlog je Ticker.
     st.divider()

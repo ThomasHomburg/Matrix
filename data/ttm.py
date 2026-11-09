@@ -45,7 +45,7 @@ class TtmResult:
     deviation: float = float("nan")  # max. relative Abweichung vs. Jahreswert
     fall_back_to_annual: bool = False
     checks: list[str] = field(default_factory=list)  # pro Kennzahl Abweichung
-    # v26: die letzten Quartale einzeln (Scorecard-Anzeige) -- v30: 8 Quartale
+    # die letzten Quartale einzeln (Scorecard-Anzeige) -- v30: 8 Quartale
     # (4 aktuelle + 4 Vorjahresquartale fuer YoY). quarters[0] = neuestes Quartal;
     # Werte: {"operating_cashflow", "capex", "stock_based_compensation",
     # "fcf_sbc", "yoy"} in Berichtswährung; yoy = FCF-SBC vs. Vorjahresquartal.
@@ -144,7 +144,7 @@ def compute_ttm(m: TickerMetrics, quarterly: dict) -> TtmResult:
             "fcf_sbc": fcf_sbc_q,
             "yoy": float("nan"),  # wird unten gegen das Vorjahresquartal (i+4) gesetzt
         })
-    # v30: YoY je Quartal -- quarters[i] vs. quarters[i+4] (Vorjahresquartal)
+    # YoY je Quartal -- quarters[i] vs. quarters[i+4] (Vorjahresquartal)
     for i in range(len(res.quarters)):
         if i + 4 < len(res.quarters):
             cur = res.quarters[i]["fcf_sbc"]

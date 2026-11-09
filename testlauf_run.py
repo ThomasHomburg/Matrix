@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(mes
 
 TICKERS = ["JPM", "BAC", "GS", "MS", "WFC", "TRV", "AIG", "MET", "AMT", "PLD",
            "EQIX", "XOM", "NEM", "FCX", "DOW", "CAT", "NVDA", "BIIB", "AEE",
-           "ROK", "DUK", "DE", "CSX", "CARR", "RL", "PYPL", "V", "MA"]  # v36: + PYPL, V, MA
+           "ROK", "DUK", "DE", "CSX", "CARR", "RL", "PYPL", "V", "MA"]  # + PYPL, V, MA
 
 
 def fmt_mos(v, special=False, le0=False):
@@ -43,7 +43,7 @@ def fmt_cov(c):
 
 
 def main():
-    """v36 (8): echter Batch-Runner -- Batches zu 20 mit Pause, Fortschrittsanzeige,
+    """echter Batch-Runner -- Batches zu 20 mit Pause, Fortschrittsanzeige,
     Fehlerlog je Ticker (ein Fehler stoppt den Lauf nicht)."""
     import time
     cfg = load_config()
@@ -79,7 +79,7 @@ def main():
 
     cols = ["Ticker", "Industry", "Industry-Gruppe", "Status (alle Modi)", "Status (jüngste 2)",
             "Quality", "Quality-Abdeckung", "Value", "Datenabdeckung", "MoS Ø3J", "MoS jüngstes GJ", "MoS TTM Ø", "MoS TTM",
-            "MoS bei 10%", "SEC", "SEC-Detail", "Flags"]  # v37: + Quality-Abdeckung (nur Quality-Blöcke)
+            "MoS bei 10%", "SEC", "SEC-Detail", "Flags"]  # + Quality-Abdeckung (nur Quality-Blöcke)
     with open("testlauf_25.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(cols)

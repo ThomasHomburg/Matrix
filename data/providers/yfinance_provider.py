@@ -33,7 +33,7 @@ _ROW_MAP = {
     "shares_diluted": ["Diluted Average Shares", "Diluted Average Shares"],
     "equity": ["Stockholders Equity", "Total Equity Gross Minority Interest"],
     "_total_debt": ["Total Debt"],
-    # v36: Fallback-Zeilen fuer Schulden, wenn 'Total Debt' fehlt (z. B. XOM)
+    # Fallback-Zeilen fuer Schulden, wenn 'Total Debt' fehlt (z. B. XOM)
     "_long_term_debt": ["Long Term Debt"],
     "_short_term_debt": ["Short Term Debt", "Short Long Term Debt"],
     "net_debt": ["Net Debt"],
@@ -47,7 +47,7 @@ _ROW_MAP = {
     "capex": ["Capital Expenditure", "Purchase Of PPE"],
     "stock_based_compensation": ["Stock Based Compensation", "Stock Based Compensation"],
     "_fcf_reported": ["Free Cash Flow"],
-    # v29: EBITDA = EBIT + D&A aus dem Cashflow-Statement (nicht das Yahoo-Feld)
+    # EBITDA = EBIT + D&A aus dem Cashflow-Statement (nicht das Yahoo-Feld)
     "depreciation_amortization": ["Depreciation And Amortization",
                                   "Depreciation & Amortization",
                                   "Depreciation Amortization And Accretion",
@@ -118,13 +118,13 @@ class YfinanceProvider:
         result = TickerMetrics(ticker=ticker.upper())
         result.name = info.get("longName") or info.get("shortName") or ""
         result.sector = info.get("sector") or "Unbekannt"
-        # v28: Industry separat (GICS Industry) -- Sektorregeln (Banken/
+        # Industry separat (GICS Industry) -- Sektorregeln (Banken/
         # Versicherer/Zykliker/REIT) laufen ueber Industry, nicht Sector
         # (PYPL/V/MA laufen als 'Financial Services', sind aber keine Banken).
         result.industry = info.get("industry") or ""
         result.country = info.get("country") or ""
         result.source = self.name
-        # v28: Zusatzkennzahlen fuer Sektorregeln (Banken/Versicherer: P/B,
+        # Zusatzkennzahlen fuer Sektorregeln (Banken/Versicherer: P/B,
         # Dividendenrendite; REITs: FFO-Hinweis falls gemeldet).
         ptb = info.get("priceToBook")
         if ptb is not None:
@@ -143,7 +143,7 @@ class YfinanceProvider:
                                        int(financials.columns[0].year))
             from datetime import date
             result.market_cap_date = date.today().isoformat()  # Stichtag: Abrufdatum
-        # v41 (0): naechster Earnings-Termin, falls im info-Feld vorhanden
+        # naechster Earnings-Termin, falls im info-Feld vorhanden
         ned = info.get("nextEarningsDate") or info.get("earningsDate")
         if ned is not None:
             try:
@@ -181,7 +181,7 @@ class YfinanceProvider:
             if bal_col is not None:
                 for key in ("equity", "_total_debt", "net_debt", "_cash", "_short_term_investments",
                             "_restricted_cash", "customer_deposits",
-                            "_long_term_debt", "_short_term_debt"):  # v36: Debt-Fallbacks
+                            "_long_term_debt", "_short_term_debt"):  # Debt-Fallbacks
                     year_metrics[key] = Metric(key, _pick(balance, _ROW_MAP[key], bal_col),
                                                "currency", currency, fy)
             if cf_col is not None:
@@ -190,7 +190,7 @@ class YfinanceProvider:
                     year_metrics[key] = Metric(key, _pick(cashflow, _ROW_MAP[key], cf_col),
                                                "currency", currency, fy)
 
-            # v29: EBITDA = EBIT + D&A aus dem Cashflow-Statement (nicht das
+            # EBITDA = EBIT + D&A aus dem Cashflow-Statement (nicht das
             # Yahoo-EBITDA-Feld); Fallback: gemeldetes EBITDA wenn D&A fehlt.
             ebit_m = year_metrics.get("ebit")
             da_m = year_metrics.get("depreciation_amortization")

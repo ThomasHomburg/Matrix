@@ -60,7 +60,7 @@ def _mk(ticker="T", mcap=1e12, sbc_na=False, fcf_vals=None):
 # ---------- (1) SBC fehlt in allen Jahren ----------
 
 def test_sbc_fehlt_allen_jahren_pruefstatus_nie_kandidat(cfg):
-    """v34/v35: SBC-Zeile fehlt in allen Jahren -> nie Kandidat, Flag
+    """SBC-Zeile fehlt in allen Jahren -> nie Kandidat, Flag
     'SBC n/a (ohne SBC)'; DCF laeuft ohne SBC (Fallback). v35: Status
     'Pruefen (SBC fehlt)' NUR, wenn ohne SBC Quality >= 60 UND MoS >= 30 %
     -- hier mit niedriger Marktkap. (Kurs 100, MoS > 30 %) erfuellt."""
@@ -81,7 +81,7 @@ def test_sbc_fehlt_allen_jahren_pruefstatus_nie_kandidat(cfg):
 
 
 def test_sbc_fehlt_aber_mos_unter_30_prozent_kein_pruefstatus(cfg):
-    """v35 (2): SBC fehlt, aber MoS < 30 % (teurer Ticker) -> normaler Status,
+    """SBC fehlt, aber MoS < 30 % (teurer Ticker) -> normaler Status,
     NICHT 'Pruefen (SBC fehlt)'; Flag und nie-Kandidat bleiben."""
     cfg = dict(cfg)
     cfg["sec"] = {"enabled": False}
@@ -150,7 +150,7 @@ def test_quality_rang_ganzzahl(cfg):
 
 
 def test_mos_unter_minus_100_prozent_als_text():
-    """v34: MoS < -100 % -> '< -100 %' statt Prozentwert."""
+    """MoS < -100 % -> '< -100 %' statt Prozentwert."""
     assert app._fmt_mos(-1.5) == "< \u2212100 %"
     assert app._fmt_mos(-1.0) == "-100.0%"
     assert app._fmt_mos(-0.42) == "-42.0%"

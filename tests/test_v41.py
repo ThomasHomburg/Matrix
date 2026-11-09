@@ -64,7 +64,7 @@ def test_export_kurs_ueber_mos_ergibt_iv_base():
     kurs = row["kurs"]
     iv_base = row["iv_base"]
     assert mos == mos and kurs == kurs and iv_base == iv_base and iv_base > 0
-    # MoS = 1 - kurs/iv_base  =>  kurs/(1-MoS) = iv_base (Toleranz 0,5 %)
+    # MoS = 1 - kurs/iv_base => kurs/(1-MoS) = iv_base (Toleranz 0,5 %)
     rekon = kurs / (1.0 - mos)
     assert abs(rekon / iv_base - 1.0) <= 0.005
     # Export-Felder vorhanden

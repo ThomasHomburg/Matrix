@@ -66,7 +66,7 @@ def _cfg_off(cfg, captive=None):
 # ---------- (1) Start-FCF <= 0 -> Werte UND MoS n/a in der Berechnung ----------
 
 def test_fcf_le0_alle_werte_und_mos_na():
-    """v40 (1): Start-FCF -0.01 Mrd., Nettokasse positiv (-10 Mrd.), CAGR 49 %
+    """Start-FCF -0.01 Mrd., Nettokasse positiv (-10 Mrd.), CAGR 49 %
     -> Wert je Aktie Bear/Base/Bull = NaN, margin_of_safety = NaN, mos_base_alt NaN."""
     m = _mk(cagr=0.49, fcf=-0.01e9, net_debt=-10e9)
     res = compute_dcf(m, DCF_CFG, fcf_mode="latest")
@@ -84,7 +84,7 @@ def test_fcf_le0_alle_werte_und_mos_na():
 
 
 def test_fcf_le0_auch_im_auto_modus():
-    """v40 (1): aktiver Auto-Modus (hier latest, da kein TTM) -> ebenfalls n/a."""
+    """aktiver Auto-Modus (hier latest, da kein TTM) -> ebenfalls n/a."""
     m = _mk(cagr=0.49, fcf=-0.01e9)
     cfg_auto = {"dcf": dict(DCF_CFG["dcf"], fcf_mode="auto")}
     res = compute_dcf(m, cfg_auto)  # auto -> faellt auf avg3/latest zurueck
@@ -95,7 +95,7 @@ def test_fcf_le0_auch_im_auto_modus():
 
 @pytest.mark.parametrize("mode", ["avg3", "latest", "ttm", "ttm_only"])
 def test_fcf_le0_jeder_modus_na(mode):
-    """v40 (1): jeder Startwert-Modus mit Start-FCF <= 0 liefert n/a (MoS NaN)."""
+    """jeder Startwert-Modus mit Start-FCF <= 0 liefert n/a (MoS NaN)."""
     m = _mk(cagr=0.49, fcf=-5e9)
     res = compute_dcf(m, DCF_CFG, fcf_mode=mode)
     if res.fcf_le0:
@@ -119,7 +119,7 @@ def test_fcf_positiv_unveraendert_bear_le_base_le_bull():
 
 
 def test_pipeline_begruendung_nennt_modus_bei_fcf_le0(cfg):
-    """v40 (1): Kandidatenregel behandelt fcf_le0-Modi wie n/a; die Begruendung
+    """Kandidatenregel behandelt fcf_le0-Modi wie n/a; die Begruendung
     nennt 'Start-FCF <= 0 im Modus X'."""
     m = _mk(cagr=0.49, fcf=-0.01e9, net_debt=-10e9)
     # vollstaendige Qualitaetsdaten, damit nur der FCF fehlt
@@ -167,7 +167,7 @@ def _mk_captive(ticker="DE", mcap=2e11) -> TickerMetrics:
 
 @pytest.mark.parametrize("ticker", ["DE", "CAT", "PCAR", "GM", "F"])
 def test_captive_finance_flag_status_nie_kandidat(cfg, ticker):
-    """v40 (2): captive_finance.tickers -> Flag 'captive_finance', Status
+    """captive_finance.tickers -> Flag 'captive_finance', Status
     'Pruefen (Captive Finance)', is_buy False, Hinweis im Detail."""
     cfg2 = _cfg_off(cfg, captive=["DE", "CAT", "PCAR", "GM", "F"])
     m = _mk_captive(ticker)
@@ -193,7 +193,7 @@ def test_captive_finance_nicht_in_liste_kein_flag(cfg):
 
 
 def test_captive_kombiniert_mit_capex_beide_gruende(cfg, monkeypatch):
-    """v40 (2): CAT mit Capex-Pruefstatus UND in captive_finance.tickers ->
+    """CAT mit Capex-Pruefstatus UND in captive_finance.tickers ->
     Status nennt BEIDE Gruende."""
     import data.sec as secmod
     from tests.test_v37 import _cfg_v40, _facts_capex

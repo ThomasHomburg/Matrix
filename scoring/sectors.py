@@ -42,7 +42,7 @@ _FINANCIAL_INDUSTRIES = {
     "insurance - diversified", "insurance - reinsurance",
     "insurance - specialty", "insurance - brokers",
     "capital markets", "asset management", "asset management - global",
-    # v39 (1): "financial data & stock exchanges" entfernt -> Standardgruppe
+    # "financial data & stock exchanges" entfernt -> Standardgruppe
     "diversified financial services",
     "mortgage finance", "shell companies",
 }
@@ -110,7 +110,7 @@ def sector_rule(m: TickerMetrics, cfg: dict | None = None) -> SectorRule:
     cyc_industries = {_norm(x) for x in cyc_cfg.get(
         "industries", sorted(_CYCLICAL_INDUSTRIES))}
     reit_industries = {_norm(x) for x in reit_cfg.get("industries", [])}
-    # v35: Sonderregel-Gruppen (Banken/Versicherer/REITs/Versorger als Liste von
+    # Sonderregel-Gruppen (Banken/Versicherer/REITs/Versorger als Liste von
     # Industry-Patternen, z. B. "Banks - *"). fnmatch, case-insensitive.
     spec_patterns = [str(x) for x in spec_cfg.get("industry_patterns", [
         "Banks - *", "Capital Markets", "Insurance - *", "REIT - *", "Utilities - *"])]
@@ -118,7 +118,7 @@ def sector_rule(m: TickerMetrics, cfg: dict | None = None) -> SectorRule:
     industry = _norm(m.industry)
     sector = _norm(m.sector)
 
-    # v35: Sonderregel hat Vorrang (vor reits/financials, damit REIT/Bank/
+    # Sonderregel hat Vorrang (vor reits/financials, damit REIT/Bank/
     # Versicherer/Versorger NICHT im Normalmodell landen)
     for pat in spec_patterns:
         if fnmatch.fnmatchcase(industry, _norm(pat)):
