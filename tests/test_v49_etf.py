@@ -160,7 +160,8 @@ def test_d_overlap_csv_etf_flag_score1_neutral(tmp_path):
     rows = smart_money.overlap(str(ranking), str(watch), cfg, db_path=db,
                                out_path=str(out_csv), force=True)
     cols = list(rows[0].keys())
-    assert cols[-1] == "etf"                          # neue Spalte am Ende
+    assert cols[-1] == "rationale_quelle"             # v49 (5): letzte Spalte
+    assert cols[-2] == "etf"                          # v49 (4b): davor
     by_t = {r["ticker"]: r for r in rows}
     assert by_t["SPY"]["etf"] == "ja"
     assert by_t["SPY"]["smart_money_score"] == 1
@@ -174,9 +175,9 @@ def test_d_overlap_csv_etf_flag_score1_neutral(tmp_path):
     assert con.execute("SELECT COUNT(*) FROM smart_money_positions WHERE ticker='SPY'"
                        ).fetchone()[0] == 1
     con.close()
-    # CSV-Header endet mit etf
+    # CSV-Header endet mit etf,rationale_quelle (v49 4b/5)
     header = out_csv.read_text(encoding="utf-8").splitlines()[0]
-    assert header.endswith(",etf")
+    assert header.endswith(",etf,rationale_quelle")
 
 
 # (f) alte DB: cusip_map ohne is_etf-Spalte -> connect() migriert additiv per ALTER

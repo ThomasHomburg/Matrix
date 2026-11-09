@@ -57,6 +57,10 @@ Aufruf:
     python smart_money.py overlap --ranking ranking.csv --watch ticker_watch_v40.csv
         [--out smart_money_overlap.csv] [--db ...] [--force]
     python smart_money.py rationale-import rationale_import.csv [--db ...]
+    python smart_money.py rationale-template [--out rationale_import.csv] [--db ...]
+        # v49 (5): Vorlage mit Score-4-Kandidaten (Score-3-Bedingung in 2 aufeinanderfolgenden
+        # Quartalen); Pflichtfelder text + quelle_url pro Zeile, Import bricht sonst mit
+        # Zeilennummer ab; Duplikate (ticker, fonds, quelle_url) werden ueberschrieben
     python smart_money.py ciks [--db ...]          # CIK-Aufloesung + Filer-Status
     python smart_money.py show TICKER [--db ...]
 
@@ -77,7 +81,10 @@ Aufruf:
     smart_money_positions (fonds, periode, report_date, accession, filing_datum,
     cusip, ticker, shares, wert, anteil_portfolio, aktion, aenderung_pct,
     positions_gesamt, rotation_pct; UNIQUE (fonds, periode, cusip, accession)),
-    smart_money_rationale (nur Import rationale_import.csv, Pflicht quelle_url),
+    smart_money_rationale (nur Import rationale_import.csv, Pflicht text + quelle_url;
+    v49 (5): rationale-template schreibt die Vorlage, Duplikate (ticker, fonds,
+    quelle_url) per INSERT OR REPLACE ueberschreiben; rationale_quelle in der
+    overlap-CSV am Ende),
     smart_money_options, smart_money_katalysator (13D/13D-A der Aktivisten),
     cusip_map (dauerhaftes CUSIP->Ticker-Mapping, quelle openfigi|name_match).
 
@@ -1471,6 +1478,67 @@ def rationale_exists(con: sqlite3.Connection, ticker: str) -> bool:
     return bool(r and r[0] > 0)
 
 
+def rationale_quelle(con: sqlite3.Connection, ticker: str) -> str:
+    """v49 (5): neueste quelle_url des Tickers, auf 40 Zeichen gekuerzt (Anzeige in
+    score/overlap als rationale_quelle -- Nachvollziehbarkeit ohne Blick in die DB)."""
+    r = con.execute(
+        "SELECT quelle_url FROM smart_money_rationale WHERE ticker=? ORDER BY datum DESC, id DESC LIMIT 1",
+        (ticker.upper(),)).fetchone()
+    return ((r[0] or "")[:40]) if r else ""
+
+
+def score4_kandidaten(con: sqlite3.Connection, cfg: dict) -> list[dict]:
+    """v49 (5): (Ticker, Fonds)-Kombinationen, die aktuell fuer Score 4 in Frage kommen --
+    Score-3-Bedingung (config smart_money.rules) in den letzten ZWEI aufeinanderfolgenden
+    Quartalen, aus der DB gelesen. Fonds = Kaeufer (neu/erhoeht, Gewicht > 0) des
+    neuesten Quartals. Rueckgabe: Zeilen fuer die Import-Vorlage (text/quelle_url leer)."""
+    rules = cfg.get("smart_money", {}).get("rules", {})
+    gew_min = float(rules.get("gewicht_summe_min", 2.0))
+    anteil_g1_min = float(rules.get("anteil_gewicht1_min", 0.05))
+    tickers = [r[0] for r in con.execute(
+        "SELECT DISTINCT ticker FROM smart_money_positions WHERE ticker IS NOT NULL ORDER BY ticker")]
+    out: list[dict] = []
+    for t in tickers:
+        rows = _rows_for(con, t)
+        quarters = sorted({r["periode"] for r in rows})
+        if len(quarters) < 2 or quarters[-2] != periode_add(quarters[-1], -1):
+            continue  # letzte zwei Quartale nicht aufeinanderfolgend -> kein Score 4
+        last_q, prev_q = quarters[-1], quarters[-2]
+
+        def _cond3(q: str) -> tuple[set, bool]:
+            last = [r for r in rows if r["periode"] == q and r["aktion"] != "basis"]
+            kaeufer = {r["fonds"] for r in last
+                       if r["aktion"] in ("neu", "erhoeht") and _fonds_gewicht(cfg, r["fonds"]) > 0}
+            gew = sum(_fonds_gewicht(cfg, f) for f in kaeufer)
+            g1 = [r["anteil_portfolio"] or 0.0 for r in last
+                  if r["fonds"] in kaeufer and _fonds_gewicht(cfg, r["fonds"]) == 1.0]
+            return kaeufer, (gew >= gew_min or (max(g1) if g1 else 0.0) >= anteil_g1_min)
+
+        kaeufer_last, cond_last = _cond3(last_q)
+        _prev_kaeufer, cond_prev = _cond3(prev_q)
+        if cond_last and cond_prev:
+            for f in sorted(kaeufer_last):
+                out.append({"ticker": t, "fonds": f, "text": "", "quelle_url": "", "datum": "", "typ": ""})
+    return out
+
+
+def write_rationale_template(con: sqlite3.Connection, cfg: dict, out_path: str) -> int:
+    """v49 (5): Import-CSV-Vorlage schreiben -- Spalten ticker,fonds,text,quelle_url,datum,typ,
+    je eine Zeile pro Score-4-Kandidat (ticker, fonds). Pflichtfelder (ticker, fonds, text,
+    quelle_url) sind in der Vorlage leer markiert (Kommentar-Zeile oben); datum/typ optional
+    (Default beim Import: heute, Sonstiges). Rueckgabe: Anzahl Zeilen."""
+    rows = score4_kandidaten(con, cfg)
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        f.write("# v49 (5) Vorlage -- Pflichtfelder: ticker, fonds, text, quelle_url. "
+                "text/quelle_url leer lassen, bis eine echte Quelle (Interview/Brief/13D) eingetragen ist "
+                "-- der Import bricht sonst mit Zeilennummer ab. datum/typ optional (Default: heute, Sonstiges).\n")
+        w = csv.writer(f)
+        w.writerow(["ticker", "fonds", "text", "quelle_url", "datum", "typ"])
+        for r in rows:
+            w.writerow([r["ticker"], r["fonds"], r["text"], r["quelle_url"], r["datum"], r["typ"]])
+    return len(rows)
+
+
 def katalysatoren(con: sqlite3.Connection, ticker: str) -> list[dict]:
     con.row_factory = sqlite3.Row
     return [dict(r) for r in con.execute(
@@ -1504,10 +1572,10 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
         return {"score": 1, "fonds_kaeufer": [], "fonds_verkaeufer": [],
                 "letzte_aktion": "", "filing_datum": filing_datum,
                 "daten_alter_tage": daten_alter, "rationale_vorhanden": False,
-                "katalysator_13d": ""}
+                "rationale_quelle": "", "katalysator_13d": ""}
     empty = {"score": 1, "fonds_kaeufer": [], "fonds_verkaeufer": [],
              "letzte_aktion": "", "filing_datum": "", "daten_alter_tage": None,
-             "rationale_vorhanden": False, "katalysator_13d": ""}
+             "rationale_vorhanden": False, "rationale_quelle": "", "katalysator_13d": ""}
     if not rows:
         return empty
 
@@ -1527,6 +1595,7 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
                          and (r["aenderung_pct"] is None or r["aenderung_pct"] <= -verk_schw)})
     letzte_aktion = "; ".join(f"{r['fonds']}:{r['aktion']}" for r in last)
     rat = rationale_exists(con, ticker)
+    rat_quelle = rationale_quelle(con, ticker) if rat else ""   # v49 (5): Anzeige in score/overlap
     kat = katalysatoren(con, ticker)
     kat_str = "; ".join(f"{k['fonds']} {k['form']} {k['datum']}" for k in kat)
 
@@ -1561,7 +1630,7 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
     return {"score": score, "fonds_kaeufer": kaeufer, "fonds_verkaeufer": verkaeufer,
             "letzte_aktion": letzte_aktion, "filing_datum": filing_datum,
             "daten_alter_tage": daten_alter, "rationale_vorhanden": rat,
-            "katalysator_13d": kat_str}
+            "rationale_quelle": rat_quelle, "katalysator_13d": kat_str}
 
 
 # --------------------------------------------------------------------------
@@ -1663,6 +1732,8 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
             "rationale_vorhanden": "ja" if sm["rationale_vorhanden"] else "nein",
             "smart_money_urteil": "neutral" if etf_flag else urteil(row, sm),
             "etf": "ja" if etf_flag else "",
+            # v49 (5): Quelle (erste 40 Zeichen der quelle_url) bei rationale_vorhanden=ja, neue Spalte am Ende
+            "rationale_quelle": sm.get("rationale_quelle", "") if sm["rationale_vorhanden"] else "",
         })
     cols = list(out[0].keys()) if out else ["ticker"]
     with open(out_path, "w", newline="", encoding="utf-8") as f:
@@ -1745,13 +1816,14 @@ def cmd_score(args) -> None:
     print("Plausibilitaet je Fonds (neueste Periode geht in die Berechnung ein):")
     for line in plausibility_lines(rep):
         print(line)
-    print(f"{'ticker':<8} {'score':>5} {'kaeufer':<30} {'verkaeufer':<20} {'alter_t':>7}  letzte_aktion / filing / katalysator")
+    print(f"{'ticker':<8} {'score':>5} {'kaeufer':<30} {'verkaeufer':<20} {'alter_t':>7}  letzte_aktion / filing / katalysator / rationale")
     for t in tickers:
         s = smart_money_score(t, cfg, db_path=Path(args.db))
+        rat = f"ja {s['rationale_quelle']}" if s["rationale_vorhanden"] else "nein"  # v49 (5)
         print(f"{t:<8} {s['score']:>5} {','.join(s['fonds_kaeufer']) or '-':<30} "
               f"{','.join(s['fonds_verkaeufer']) or '-':<20} "
               f"{str(s['daten_alter_tage'] if s['daten_alter_tage'] is not None else '-'):>7}  "
-              f"{s['letzte_aktion'] or '-'} | {s['filing_datum'] or '-'} | {s['katalysator_13d'] or '-'}")
+              f"{s['letzte_aktion'] or '-'} | {s['filing_datum'] or '-'} | {s['katalysator_13d'] or '-'} | {rat}")
 
 
 def cmd_overlap(args) -> None:
@@ -1794,27 +1866,56 @@ def cmd_ciks(args) -> None:
 def cmd_rationale_import(args) -> None:
     cfg = load_config()
     con = connect(Path(args.db))
-    n, skipped = 0, 0
+    # v49 (5): erst ALLE Zeilen validieren -- Pflichtfelder text + quelle_url; bei Fehlern
+    # Abbruch mit kompletter Fehlerliste (Zeilennummer = Dateizeile inkl. Header, fehlendes
+    # Feld), es wird NICHTS importiert (kein Teil-Import). datum/typ optional
+    # (Default: heute, Sonstiges). #-Kommentarzeilen (z. B. aus rationale-template) werden ignoriert.
+    rows: list[tuple] = []
+    fehler: list[tuple[int, str, list[str]]] = []
     with open(args.csv_file, newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
+        for zeile, row in enumerate(csv.DictReader(f), start=2):  # Zeile 1 = Header
             ticker = (row.get("ticker") or "").strip().upper()
+            if not ticker or ticker.startswith("#"):
+                continue
             text = (row.get("text") or "").strip()
             quelle = (row.get("quelle_url") or "").strip()
-            if not ticker or not text:
-                skipped += 1
+            fehlend = [k for k, v in (("text", text), ("quelle_url", quelle)) if not v]
+            if fehlend:
+                fehler.append((zeile, ticker, fehlend))
                 continue
-            if not quelle:
-                print(f"Uebersprungen (Pflichtfeld quelle_url fehlt): {ticker}", file=sys.stderr)
-                skipped += 1
-                continue
-            con.execute(
-                """INSERT INTO smart_money_rationale (ticker, fonds, text, quelle_url, datum, typ)
-                   VALUES (?,?,?,?,?,?)""",
-                (ticker, row.get("fonds") or None, text, quelle,
-                 row.get("datum") or None, row.get("typ") or "Sonstiges"))
-            n += 1
+            rows.append((ticker, (row.get("fonds") or "").strip() or None, text, quelle,
+                         (row.get("datum") or "").strip() or date.today().isoformat(),
+                         (row.get("typ") or "").strip() or "Sonstiges"))
+    if fehler:
+        msg = ["Abbruch rationale-import -- Pflichtfeld fehlt (Zeile = Dateizeile inkl. Header):"]
+        for zeile, ticker, fehlend in fehler:
+            msg.append(f"  Zeile {zeile}: ticker={ticker} -- fehlt: {', '.join(fehlend)}")
+        msg.append("Nichts importiert. text und quelle_url in jeder Zeile ausfuellen "
+                   "(echte Quelle: Interview/Brief/13D) -- siehe rationale-template.")
+        raise SystemExit("\n".join(msg))
+    for ticker, fonds, text, quelle, datum, typ in rows:
+        # v49 (5): Duplikat (ticker, fonds, quelle_url) ueberschreiben (INSERT OR REPLACE
+        # greift ueber idx_smr_unique), nicht doppelt anlegen
+        con.execute(
+            """INSERT OR REPLACE INTO smart_money_rationale (ticker, fonds, text, quelle_url, datum, typ)
+               VALUES (?,?,?,?,?,?)""",
+            (ticker, fonds, text, quelle, datum, typ))
     con.commit()
-    print(f"{n} Rationale importiert, {skipped} uebersprungen (aus {args.csv_file}).")
+    print(f"{len(rows)} Rationale importiert (aus {args.csv_file}; "
+          "Duplikate (ticker, fonds, quelle_url) ueberschrieben).")
+
+
+def cmd_rationale_template(args) -> None:
+    """v49 (5): Import-Vorlage schreiben -- je (Ticker, Fonds)-Kombination, die aktuell
+    fuer Score 4 in Frage kommt (Score-3-Bedingung in 2 aufeinanderfolgenden Quartalen)."""
+    cfg = load_config()
+    con = connect(Path(args.db))
+    n = write_rationale_template(con, cfg, args.out)
+    con.close()
+    print(f"{n} Vorlage-Zeile(n) -> {args.out}")
+    print("Score-4-Kandidaten = Score-3-Bedingung in den letzten 2 aufeinanderfolgenden Quartalen. "
+          "Pflichtfelder text + quelle_url pro Zeile ausfuellen (echte Quelle), dann: "
+          "python smart_money.py rationale-import")
 
 
 def cmd_show(args) -> None:
@@ -1869,10 +1970,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_o.set_defaults(func=cmd_overlap)
     p_c = sub.add_parser("ciks", help="CIK-Aufloesung + 13F-Filer-Status aller Fonds")
     p_c.set_defaults(func=cmd_ciks)
-    p_r = sub.add_parser("rationale-import", help="Rationale aus CSV importieren (Pflicht quelle_url)")
+    p_r = sub.add_parser("rationale-import", help="Rationale aus CSV importieren (Pflicht text + quelle_url; Abbruch mit Fehlerliste bei Luecken)")
     p_r.add_argument("csv_file", nargs="?", default=None,
                      help="Default: config smart_money.rationale_csv (rationale_import.csv)")
     p_r.set_defaults(func=cmd_rationale_import)
+    p_rt = sub.add_parser("rationale-template",
+                          help="v49 (5): Import-Vorlage mit Score-4-Kandidaten schreiben")
+    p_rt.add_argument("--out", default=None,
+                      help="Default: config smart_money.rationale_csv (rationale_import.csv)")
+    p_rt.set_defaults(func=cmd_rationale_template)
     p_sh = sub.add_parser("show", help="Positionen eines Tickers oder Perioden je Fonds (--fonds)")
     p_sh.add_argument("ticker", nargs="?", default=None)
     p_sh.add_argument("--fonds", default=None,
@@ -1883,9 +1989,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args(sys.argv[1:])
-    if getattr(args, "cmd", None) == "rationale-import" and not getattr(args, "csv_file", None):
+    if getattr(args, "cmd", None) in ("rationale-import", "rationale-template"):
         cfg = load_config()
-        args.csv_file = cfg.get("smart_money", {}).get("rationale_csv", "rationale_import.csv")
+        if getattr(args, "cmd") == "rationale-import" and not getattr(args, "csv_file", None):
+            args.csv_file = cfg.get("smart_money", {}).get("rationale_csv", "rationale_import.csv")
+        if getattr(args, "cmd") == "rationale-template" and not getattr(args, "out", None):
+            args.out = cfg.get("smart_money", {}).get("rationale_csv", "rationale_import.csv")
     args.func(args)
 
 

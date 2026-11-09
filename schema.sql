@@ -165,3 +165,5 @@ CREATE TABLE IF NOT EXISTS smart_money_rationale (
     typ         TEXT                           -- Brief | Interview | 13D | Sonstiges
 );
 CREATE INDEX IF NOT EXISTS idx_smr_ticker ON smart_money_rationale (ticker);
+-- v49 (5): Duplikat (ticker, fonds, quelle_url) wird per INSERT OR REPLACE ueberschrieben, nicht doppelt angelegt
+CREATE UNIQUE INDEX IF NOT EXISTS idx_smr_unique ON smart_money_rationale (ticker, COALESCE(fonds, ''), quelle_url);
