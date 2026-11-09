@@ -1,0 +1,2 @@
+v49 (5b) Protokoll: Zeilen aus rationale_import.csv OHNE verifizierbare Quelle (bleiben leer, kein Import)
+Stand: 0 Zeile(n)
