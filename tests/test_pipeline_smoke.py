@@ -27,33 +27,33 @@ APP_ROW_COLUMNS = {
     "dcf_value_per_share_base", "dcf_value_per_share_bear",
     "dcf_value_per_share_bull",
     "is_buy", "flags",
-    # v26: MoS je Startwert-Modus + umschaltbare Nettoverschuldung
+    # MoS je Startwert-Modus + umschaltbare Nettoverschuldung
     "mos_avg3", "mos_latest", "mos_ttm", "mos_rule", "mos_rule_mode",
     "mos_base_alt_nd", "dcf_net_debt_mode", "dcf_net_debt_alt",
     "dcf_net_debt_alt_source",
-    # v26: SEC-EDGAR-Abgleich
+    # SEC-EDGAR-Abgleich
     "sec_check_ok", "sec_check_flag", "sec_check_note",
-    # v27: reiner TTM-Start (ttm_only) + Zwei Stufen Kandidat/Beobachtung
+    # reiner TTM-Start (ttm_only) + Zwei Stufen Kandidat/Beobachtung
     "mos_ttm_only", "status", "status_detail",
-    # v28: Sektorgruppe (Industry) + Sektor-Kennzahlen
+    # Sektorgruppe (Industry) + Sektor-Kennzahlen
     "sector_group", "sector_note", "industry",
     "normalized_earnings", "normalized_earnings_years",
     "price_to_book", "dividend_yield",
-    # v29: EBITDA-Plausibilitaet + Historie (Jahre mit Werten)
+    # EBITDA-Plausibilitaet + Historie (Jahre mit Werten)
     "ebitda_unplausible", "history_years",
-    # v30: Status unter beiden Kandidatenregeln + aktive Regel
+    # Status unter beiden Kandidatenregeln + aktive Regel
     "status_all", "status_all_detail", "status_recent2", "status_recent2_detail",
     "mos_recent2", "candidate_mode",
-    # v33: SBC-Pruefstatus + Start-FCF <= 0
+    # SBC-Pruefstatus + Start-FCF <= 0
     "dcf_sbc_missing", "status_pruefen_sbc", "dcf_fcf_le0", "value_na_below_coverage",
-    # v35: Sektor-Sonderregel + SEC-Detail + SBC-SEC-Quelle
+    # Sektor-Sonderregel + SEC-Detail + SBC-SEC-Quelle
     "sector_special", "sec_detail", "sbc_sec_sources", "data_quality",
-    # v36: MoS bei 10 % (robust), Capex-Pruefstatus, Bilanz-Konsistenz, Zykliker-Cap
+    # MoS bei 10 % (robust), Capex-Pruefstatus, Bilanz-Konsistenz, Zykliker-Cap
     "mos_robust", "mos_robust_rate", "status_pruefen_capex", "capex_dev_years",
     "nd_inconsistent", "zyk_unnorm",
-    # v37: Quality-Abdeckung nur ueber Quality-Bloecke
+    # Quality-Abdeckung nur ueber Quality-Bloecke
     "quality_coverage",
-    # v41 (0): Export-Felder fuer Tracker/Live-Update
+    # Export-Felder fuer Tracker/Live-Update
     "kurs", "kurs_datum", "calc_date",
     "iv_bear", "iv_base", "iv_bull",
     "iv_avg3", "iv_latest", "iv_ttm", "iv_ttm_only", "iv_base_10pct",
@@ -67,9 +67,9 @@ DCF_RESULT_FIELDS = {
     "margin_of_safety", "is_buy", "fcf_normalized_conv",
     "fcf_basis", "ttm_quarter_end", "fcf_sources",
     "net_debt", "net_debt_source", "customer_deposits", "fcf_mode",
-    # v26: umschaltbare Nettoverschuldung
+    # umschaltbare Nettoverschuldung
     "net_debt_mode", "net_debt_alt", "net_debt_alt_source", "mos_base_alt",
-    # v37 (1): tatsaechliche Wachstumsraten je Szenario
+    # tatsaechliche Wachstumsraten je Szenario
     "scenario_growth",
 }
 
@@ -88,7 +88,7 @@ def test_dcf_result_hat_alle_felder():
 
 
 def test_dcf_result_felder_werden_tatsaechlich_gelesen():
-    """v25: Jedes Attribut, das pipeline.py oder app.py von DcfResult liest,
+    """Jedes Attribut, das pipeline.py oder app.py von DcfResult liest,
     muss in der Klasse DEFINIERT sein -- dynamisch aus dem Quelltext
     ermittelt (statt handgepflegter Liste). Fängt Mischstaende wie
     'pipeline.py aus TTM-Branch, dcf.py aus aelterem Stand'."""
@@ -105,7 +105,7 @@ def test_dcf_result_felder_werden_tatsaechlich_gelesen():
         # dcf.<attr> und dcf_m.<attr> (app.py: Startwert-Modi-Schleife)
         used |= set(re.findall(r"\bdcf(?:_m)?\.(\w+)", src))
     # 'scenarios' ist ein dict -- .get(...) darauf ist ok; Rest muessen Felder sein
-    # v36: dc.get("robust_discount_rate") ist Config-Zugriff (cfg["dcf"]), kein DcfResult-Attribut
+    # dc.get("robust_discount_rate") ist Config-Zugriff (cfg["dcf"]), kein DcfResult-Attribut
     missing = used - fields - {"scenarios", "robust_discount_rate"}
     assert not missing, (
         f"pipeline.py/app.py lesen DcfResult-Attribute, die nicht definiert "

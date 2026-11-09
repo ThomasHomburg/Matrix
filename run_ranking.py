@@ -114,7 +114,7 @@ def _run_batched(tickers: list[str], cfg: dict, providers: dict, args) -> tuple[
 
 
 def _write_ranking_csv(rows: list[dict], excluded: list[dict], errors: list[dict], out_path: str) -> None:
-    """v32: Ergebnis als CSV speichern (bewertete Rows + ausgeschlossene + Fehler)."""
+    """Ergebnis als CSV speichern (bewertete Rows + ausgeschlossene + Fehler)."""
     cols = ["ticker", "name", "sector", "industry", "sector_group", "country", "source", "score", "quality",
             "value", "coverage", "status", "status_all", "status_recent2", "candidate_mode",
             "margin_of_safety", "mos_rule", "mos_recent2", "mos_avg3", "mos_latest", "mos_ttm",
@@ -122,7 +122,7 @@ def _write_ranking_csv(rows: list[dict], excluded: list[dict], errors: list[dict
             "roic_5y", "roic_latest", "fcf_yield_3y", "history_years", "flags",
             "sec_check_ok", "sec_check_flag", "sec_check_note", "sec_detail", "kandidat",
             "mos_robust", "status_pruefen_capex", "nd_inconsistent", "zyk_unnorm",
-            # v41 (0): Export fuer Tracker/Live-Update
+            # Export fuer Tracker/Live-Update
             "kurs", "kurs_datum", "calc_date",
             "iv_bear", "iv_base", "iv_bull",
             "iv_avg3", "iv_latest", "iv_ttm", "iv_ttm_only", "iv_base_10pct",
@@ -155,7 +155,7 @@ def main() -> None:
     # Provider-Modus: Auswahl per Ticker-Suffix (FMP fuer US, yfinance sonst)
     providers = build_providers(api_key)
     if args.tickers:
-        # v38: --tickers-Datei fehlt oder liefert 0 Ticker -> Abbruch mit
+        # --tickers-Datei fehlt oder liefert 0 Ticker -> Abbruch mit
         # Fehlermeldung + Exit-Code 1, KEINE leere Ergebnis-CSV schreiben
         if not Path(args.tickers).exists():
             print(f"Fehler: Ticker-Datei nicht gefunden: {args.tickers}", file=sys.stderr)

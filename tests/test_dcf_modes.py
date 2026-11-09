@@ -167,7 +167,7 @@ def test_fcf_mode_ttm_uses_ttm_when_plausible():
     m.ttm_fallback = False
     res = compute_dcf(m, DCF_CFG, fcf_mode="ttm")
     assert res.fcf_basis == "ttm"
-    # Ø = (150 + 100 + 80) / 3  (FY2025 ueberlappt das TTM-Fenster!)
+    # Ø = (150 + 100 + 80) / 3 (FY2025 ueberlappt das TTM-Fenster!)
     assert res.fcf_normalized == pytest.approx((150.0 + 100.0 + 80.0) / 3)
     names = [n for n, _, _ in res.fcf_sources]
     assert names == ["TTM", "FY2024", "FY2023"]

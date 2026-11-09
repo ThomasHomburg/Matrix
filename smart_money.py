@@ -1,37 +1,37 @@
-"""v49: Smart Money -- 13F-HR einer Fonds-Liste aus SEC EDGAR (smart_money.py).
+"""Smart Money -- 13F-HR einer Fonds-Liste aus SEC EDGAR (smart_money.py).
 
-v49 (1) Migration: Beim Start (connect) prueft das Modul per PRAGMA table_info,
+Beim Start (connect) prueft das Modul per PRAGMA table_info,
     ob smart_money_positions die Spalten periode, accession, report_date hat.
     Fehlt eine -> Tabelle migrieren: Altzeilen werden verworfen (Periodenlabel
     falsch), Hinweis im Log; `fetch --reset` legt die Tabelle per DROP + CREATE
     im aktuellen Schema neu an (cusip_map bleibt).
-v49 (1c) Optionen: store_quarter schreibt periode auch in smart_money_options;
+store_quarter schreibt periode auch in smart_money_options;
     Migration, `fetch --reset` und der Schema-Guard pruefen daher BEIDE Tabellen
     (Optionen: Pflichtspalte periode) -- eine alte Options-Tabelle (v42: quartal)
     wird verworfen und neu aufgebaut statt per CREATE IF NOT EXISTS zu ueberleben.
-v49 (2) Basisperiode: die aelteste geladene Periode je Fonds hat aktion =
+die aelteste geladene Periode je Fonds hat aktion =
     "basis" (nie "neu"); neu/erhoeht/reduziert/verkauft nur mit Vorquartal.
     Score und Urteil ignorieren "basis".
-v49 (3) Vollstaendigkeitsschutz: nach fetch je Fonds Perioden + Positionszahl
+nach fetch je Fonds Perioden + Positionszahl
     ausgeben; score und overlap brechen mit klarer Meldung ab, wenn die neueste
     Periode eines Fonds aelter als 140 Tage ist oder in den letzten 4 Perioden
     eine fehlt (--force ueberstimmt). Die Ausgabe nennt je Fonds die Periode,
     die in die Berechnung einging.
-v49 (3b) --force: score/overlap [--force] uebersteuert ausschliesslich diesen Abbruch
+score/overlap [--force] uebersteuert ausschliesslich diesen Abbruch
     (Schema-Guard/User-Agent-Pruefung schlagen weiterhin durch). Die Abbruchmeldung
     nennt je blockiertem Fonds Periode + Grund und den Ausweg --force; mit --force
     Warnzeile je blockiertem Fonds im Log. Ergebnis-CSV wird erst am Ende geschrieben --
     bricht der Guard ab, bleibt eine vorhandene CSV unveraendert.
-v49 (4) Mapping: Abdeckung je Fonds nach Wert (Anteil mit Ticker) + die 20
+Abdeckung je Fonds nach Wert (Anteil mit Ticker) + die 20
     groessten nicht zugeordneten Positionen (CUSIP, name, wert, titleOfClass).
     Anleihen, Optionen und Nicht-US-Titel gelten als "nicht aktienrelevant" und
     zaehlen nicht als Fehler. Ziel: >= 95 % nach Wert bei US-Aktien.
-v49 (5) Watchlist: overlap --watch trimmt BOM + Leerzeichen und listet
+overlap --watch trimmt BOM + Leerzeichen und listet
     Watch-Ticker ohne Fonds-Treffer ausdruecklich auf.
 
-v48 (1) Periode: Label "periode" = Jahr-Qn exklusiv aus reportDate
+Label "periode" = Jahr-Qn exklusiv aus reportDate
 
-v48 (1) Periode: Label "periode" = Jahr-Qn exklusiv aus reportDate
+Label "periode" = Jahr-Qn exklusiv aus reportDate
     (2026-06-30 -> 2026-Q2, 2026-03-31 -> 2026-Q1). Eindeutiger Schluessel
     (fonds, periode, cusip, accession); 13F-HR/A ersetzt das Original derselben
     Periode (nur die neueste Fassung bleibt in der DB). Neuer Schalter
@@ -39,7 +39,7 @@ v48 (1) Periode: Label "periode" = Jahr-Qn exklusiv aus reportDate
     die letzten 8 Perioden je Fonds neu. Danach Vollstaendigkeitspruefung je
     Fonds (Perioden, fehlende Perioden, Anzahl Positionen, Warnung bei Luecken)
     + Mapping-Abdeckung je Fonds (Anteil der Positionen nach Wert mit Ticker).
-v48 (2) Ticker-Zuordnung: CUSIP->Ticker ueber cusip_map (dauerhaft), statisches
+CUSIP->Ticker ueber cusip_map (dauerhaft), statisches
     config-cusip_map, OpenFIGI (max. 5 Auftraege/Anfrage ohne API-Key, bis 100
     mit OPENFIGI_API_KEY, mind. 2,5 s Pause, Ergebnis dauerhaft in cusip_map,
     quelle openfigi) und Fallback nameOfIssuer normalisiert gegen die Titel in
@@ -58,7 +58,7 @@ Aufruf:
         [--out smart_money_overlap.csv] [--db ...] [--force]
     python smart_money.py rationale-import rationale_import.csv [--db ...]
     python smart_money.py rationale-template [--out rationale_import.csv] [--db ...]
-        # v49 (5): Vorlage mit Score-4-Kandidaten (Score-3-Bedingung in 2 aufeinanderfolgenden
+        # Vorlage mit Score-4-Kandidaten (Score-3-Bedingung in 2 aufeinanderfolgenden
         # Quartalen); Pflichtfelder text + quelle_url pro Zeile, Import bricht sonst mit
         # Zeilennummer ab; Duplikate (ticker, fonds, quelle_url) werden ueberschrieben
     python smart_money.py ciks [--db ...]          # CIK-Aufloesung + Filer-Status
@@ -82,7 +82,7 @@ Aufruf:
     cusip, ticker, shares, wert, anteil_portfolio, aktion, aenderung_pct,
     positions_gesamt, rotation_pct; UNIQUE (fonds, periode, cusip, accession)),
     smart_money_rationale (nur Import rationale_import.csv, Pflicht text + quelle_url;
-    v49 (5): rationale-template schreibt die Vorlage, Duplikate (ticker, fonds,
+    rationale-template schreibt die Vorlage, Duplikate (ticker, fonds,
     quelle_url) per INSERT OR REPLACE ueberschreiben; rationale_quelle in der
     overlap-CSV am Ende),
     smart_money_options, smart_money_katalysator (13D/13D-A der Aktivisten),
@@ -97,7 +97,7 @@ Aufruf:
     Minimum verkauf_min_score (1). Zusaetzlich je Ticker: fonds_kaeufer,
     fonds_verkaeufer, letzte_aktion, filing_datum, daten_alter_tage,
     katalysator_13d (aus 13D/13D-A).
-    v49 (4b) ETF/Index (SPY, IWM, ...): Erkennung ueber cusip_map.is_etf (OpenFIGI-
+    ETF/Index (SPY, IWM, ...): Erkennung ueber cusip_map.is_etf (OpenFIGI-
     US-Composite-Eintrag mit securityType 'ETP'/'ETF' bzw. marketSector
     'MarketSector/Market'; ADRs/REITs bleiben bewusst draussen) ODER statische
     Liste smart_money.etf_ticker (config.yaml).
@@ -109,7 +109,7 @@ Aufruf:
     Kandidat/Beobachtung*, oder Fonds verkauft UND Status nein), Divergenz
     (Fonds kauft UND (MoS min < 0 oder Status nein)), Warnung (Fonds
     verkauft/reduziert UND Status Kandidat/Beobachtung), sonst neutral.
-    v49 (4b): ETF/Index-Zeilen stehen weiterhin in der CSV (Abdeckung
+    ETF/Index-Zeilen stehen weiterhin in der CSV (Abdeckung
     nachvollziehbar), aber mit Score 1, Urteil neutral und Flag etf=ja
     (neue Spalte am Ende).
     Ausgabe smart_money_overlap.csv: alle Watchlist-Ticker (--watch CSV,
@@ -151,11 +151,11 @@ AKTIONEN = ("neu", "erhoeht", "reduziert", "verkauft", "unveraendert", "basis")
 # --------------------------------------------------------------------------
 
 class UserAgentError(Exception):
-    """v44 (1): ungueltiger User-Agent -- Abbruch VOR dem ersten Request."""
+    """ungueltiger User-Agent -- Abbruch VOR dem ersten Request."""
 
 
 def validate_user_agent(ua: str) -> str:
-    """v44 (1): SEC-Policy -- User-Agent im Format 'Name email@domain'.
+    """SEC-Policy -- User-Agent im Format 'Name email@domain'.
 
     Fehlt der Wert oder enthaelt er 'example', 'test' oder keinen '@'
     -> UserAgentError mit klarer Meldung (Abbruch vor dem ersten Request).
@@ -172,7 +172,7 @@ def validate_user_agent(ua: str) -> str:
 
 
 def user_agent_from_cfg(cfg: dict) -> str:
-    """v44 (1): smart_money.user_agent, Fallback sec.user_agent; validiert.
+    """smart_money.user_agent, Fallback sec.user_agent; validiert.
 
     Tests/CI ohne echten Kontakt: sec-Block nur mit {enabled: False} (kein
     user_agent) -> Rueckgabe "" (nicht validiert); fetch_all bricht dann vor
@@ -207,8 +207,8 @@ class SecHttp:
         self._fetcher = fetcher
         self.errors = errors if errors is not None else []
         self._sleep = sleeper  # injizierbar fuer Tests (429/403 ohne Warten)
-        self.fonds = ""  # v45: aktueller Fondsname -- landet im Fehlerlog (statt "None")
-        self.accession = ""  # v46: aktuelle Accession -- landet im Fehlerlog
+        self.fonds = ""  # aktueller Fondsname -- landet im Fehlerlog (statt "None")
+        self.accession = ""  # aktuelle Accession -- landet im Fehlerlog
 
     def get(self, url: str, timeout: int = 30) -> bytes:
         gap = 1.0 / self.max_rps
@@ -233,7 +233,7 @@ class SecHttp:
                                    attempt, self.retry_tries - 1, w, self.user_agent)
                     self._sleep(w)
                     continue
-                # v46: JEDER HTTP-Fehler (auch 404) landet mit URL + Fonds + Accession
+                # JEDER HTTP-Fehler (auch 404) landet mit URL + Fonds + Accession
                 # im Fehlerlog -- 403/429 nach allen Retries mit UA-Hinweis
                 if exc.code in (403, 429):
                     err = (f"HTTP {exc.code} nach {self.retry_tries} Versuchen -- "
@@ -241,7 +241,7 @@ class SecHttp:
                 else:
                     err = f"HTTP {exc.code}"
                 self.errors.append({
-                    "fonds": self.fonds or None,  # v45: Fondsnamen statt "None"
+                    "fonds": self.fonds or None,  # Fondsnamen statt "None"
                     "accession": self.accession or None,  # v46
                     "url": url, "http_code": exc.code, "error": err})
                 logger.error("SEC HTTP %d fuer %s (fonds=%s accession=%s): %s",
@@ -258,7 +258,7 @@ def _sec_base() -> str:
 # --------------------------------------------------------------------------
 
 def _validate_cik_13f(cik: str, http: SecHttp) -> dict | None:
-    """v44 (2): CIK validieren -- data.sec.gov/submissions/CIK##########.json muss
+    """CIK validieren -- data.sec.gov/submissions/CIK##########.json muss
     mindestens ein 13F-HR enthalten. Rueckgabe: {name, cik, last_13f_hr, n_13f}
     oder None (kein Filer)."""
     cik10 = str(cik).zfill(10)
@@ -283,7 +283,7 @@ def _validate_cik_13f(cik: str, http: SecHttp) -> dict | None:
 
 
 def search_company_13f(name: str, http: SecHttp) -> list[dict]:
-    """v44 (2): EDGAR-Firmensuche -- cgi-bin/browse-edgar?action=getcompany&
+    """EDGAR-Firmensuche -- cgi-bin/browse-edgar?action=getcompany&
     company=<Name>&type=13F-HR&output=atom. Rueckgabe: Trefferliste
     [{cik, name, last_13f_hr}] (validiert via submissions; nur 13F-HR-Filer).
     Mehrere Kandidaten -> volle Liste, KEIN Auto-Pick."""
@@ -328,7 +328,7 @@ def search_company_13f(name: str, http: SecHttp) -> list[dict]:
 
 
 def resolve_all_ciks(cfg: dict, http: SecHttp) -> list[dict]:
-    """v44 (2): CIK-Aufloesung je Fonds, Reihenfolge:
+    """CIK-Aufloesung je Fonds, Reihenfolge:
     (a) cik aus config.yaml (validiert: mindestens ein 13F-HR in submissions),
     (b) EDGAR-Firmensuche mit Namensvarianten (config smart_money.name_variants)
         -> Trefferliste ins Report, NICHTS automatisch uebernehmen,
@@ -386,7 +386,7 @@ def load_company_tickers(http: SecHttp) -> dict[str, str]:
         return {}
 
 
-# v48: Tokens, die beim Normalisieren von Firmennamen (nameOfIssuer vs. Titel in
+# Tokens, die beim Normalisieren von Firmennamen (nameOfIssuer vs. Titel in
 # company_tickers.json) ignoriert werden
 _ISSUER_TOKENS_IGNORE = frozenset({
     "THE", "INC", "CORP", "CORPORATION", "CO", "COMPANY", "LTD", "LIMITED",
@@ -396,7 +396,7 @@ _ISSUER_TOKENS_IGNORE = frozenset({
 
 
 def normalize_issuer_name(name: str) -> str:
-    """v48: Firmenname normalisieren fuer den name_match-Fallback:
+    """Firmenname normalisieren fuer den name_match-Fallback:
     Grossbuchstaben, Nicht-Alphanumerisch -> Leerzeichen, Suffix-Tokens
     (INC, CORP, AG, ...) entfernt. 'Apple Inc.' -> 'APPLE'."""
     s = re.sub(r"[^A-Z0-9]+", " ", (name or "").upper())
@@ -404,7 +404,7 @@ def normalize_issuer_name(name: str) -> str:
 
 
 def load_company_titles(http: SecHttp) -> dict[str, str]:
-    """v48: SEC company_tickers.json -> {normalisierter Titel: TICKER}.
+    """SEC company_tickers.json -> {normalisierter Titel: TICKER}.
     Basis des nameOfIssuer-Fallbacks fuer US-Aktien ohne CUSIP-Mapping."""
     try:
         raw = http.get(f"{_sec_base()}/files/company_tickers.json")
@@ -421,17 +421,17 @@ def load_company_titles(http: SecHttp) -> dict[str, str]:
         return {}
 
 
-OPENFIGI_MIN_GAP_S = 2.5  # v46: max 25 OpenFIGI-Anfragen/Minute (mindestens 2,5 s Pause)
+OPENFIGI_MIN_GAP_S = 2.5  # max 25 OpenFIGI-Anfragen/Minute (mindestens 2,5 s Pause)
 
 
 def _openfigi_chunk_size() -> int:
-    """v46: ohne API-Key hoechstens 5 Auftraege je Anfrage; mit Umgebungsvariable
+    """ohne API-Key hoechstens 5 Auftraege je Anfrage; mit Umgebungsvariable
     OPENFIGI_API_KEY bis 100."""
     return 100 if os.environ.get("OPENFIGI_API_KEY", "").strip() else 5
 
 
 def _openfigi_post(http: SecHttp, url: str, payload: bytes) -> bytes:
-    """v46: OpenFIGI POST; bei HTTP 429 Wiederholung (http.retry_tries Versuche)."""
+    """OpenFIGI POST; bei HTTP 429 Wiederholung (http.retry_tries Versuche)."""
     for attempt in range(1, http.retry_tries + 1):
         try:
             if http._fetcher is not None:
@@ -454,14 +454,14 @@ def _openfigi_post(http: SecHttp, url: str, payload: bytes) -> bytes:
 
 
 def _etf_ticker_set(cfg: dict) -> set[str]:
-    """v49 (4b): statische Config-Liste smart_money.etf_ticker (bekannte ETF/Index-Ticker,
+    """statische Config-Liste smart_money.etf_ticker (bekannte ETF/Index-Ticker,
     erweiterbar in config.yaml -- keine Magic Strings im Code)."""
     return {str(t).strip().upper() for t in (cfg.get("smart_money", {}).get("etf_ticker") or [])
             if str(t).strip()}
 
 
 def _is_etf_eintrag(e: dict) -> bool:
-    """v49 (4b): OpenFIGI-US-Composite-Eintrag als ETF/Index werten, wenn securityType
+    """OpenFIGI-US-Composite-Eintrag als ETF/Index werten, wenn securityType
     'ETP' oder 'ETF' ist (live verifiziert: SPY/IWM/QQQ/XLF -> 'ETP', securityType2
     'Mutual Fund') oder marketSector 'MarketSector/Market'. NICHT einfach
     securityType != 'Common Stock': ADRs sind 'ADR' (TSM, BABA, SAP, DEO) und REITs
@@ -473,7 +473,7 @@ def _is_etf_eintrag(e: dict) -> bool:
 
 
 def is_etf_ticker(con: sqlite3.Connection | None, ticker: str, cfg: dict) -> bool:
-    """v49 (4b): ETF/Index? Zwei Quellen: (a) statische Config-Liste smart_money.etf_ticker;
+    """ETF/Index? Zwei Quellen: (a) statische Config-Liste smart_money.etf_ticker;
     (b) cusip_map.is_etf=1 (aus der OpenFIGI-Antwort gesetzt, siehe _is_etf_eintrag)."""
     t = (ticker or "").strip().upper()
     if not t:
@@ -497,7 +497,7 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
                      names: dict[str, str] | None = None,
                      title_map: dict[str, str] | None = None,
                      etf: dict[str, bool] | None = None) -> dict[str, str]:
-    """v48: CUSIP -> Ticker. Reihenfolge: Tabelle cusip_map (dauerhaft in der DB,
+    """CUSIP -> Ticker. Reihenfolge: Tabelle cusip_map (dauerhaft in der DB,
     wird nicht erneut abgefragt), statisches cusip_map (config/Fixtures), dann
     OpenFIGI POST (cusip_map_url) in Chunks -- 5 ohne API-Key, 100 mit
     OPENFIGI_API_KEY; mindestens 2,5 s Pause (max 25/Minute), 429 -> Retry.
@@ -507,13 +507,13 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
     'name_match'. Nicht zuordenbare CUSIPs fehlen im Ergebnis (ticker NULL in
     smart_money_positions) und werden einmalig gesammelt (`unmapped`, bzw. eine
     Fehlerlog-Zeile), nicht als Einzelzeilen.
-    v49 (4b): optionales out-Param `etf` -- fuellt je CUSIP das ETF/Index-Flag
+    optionales out-Param `etf` -- fuellt je CUSIP das ETF/Index-Flag
     (aus cusip_map.is_etf, der OpenFIGI-Antwort via _is_etf_eintrag oder der
     Config-Liste etf_ticker); wird IMMER dauerhaft in cusip_map.is_etf gespeichert
     (unabhaengig vom out-Param, damit fetch_all ohne etf-Param mitpersistiert)."""
     out: dict[str, str] = {}
     quelle: dict[str, str] = {}
-    etf_map = etf if etf is not None else {}   # v49 (4b): immer gefuellt, auch ohne out-Param
+    etf_map = etf if etf is not None else {}   # immer gefuellt, auch ohne out-Param
     etf_set = _etf_ticker_set(cfg)
     has_etf_col = (con is not None
                    and "is_etf" in {r[1] for r in con.execute("PRAGMA table_info(cusip_map)")})
@@ -561,7 +561,7 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
                     raw = _openfigi_post(http, url, payload)
                     data = json.loads(raw.decode("utf-8"))
                     for item, c in zip(data, chunk):
-                        # v49 (4a): OpenFIGI antwortet je Eingabe mit {"data": [eintrag, ...]}
+                        # OpenFIGI antwortet je Eingabe mit {"data": [eintrag, ...]}
                         # (Liste von Boersen-Eintraegen mit figi/ticker/exchCode/securityType)
                         # oder {"error": "..."} -- NICHT mit {"ticker": ...}. Gewaehlt wird der
                         # US-Eintrag (exchCode "US" = US-Composite); ohne Filter wuerden z. B.
@@ -575,12 +575,12 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
                         if t:
                             out[c] = str(t).upper()
                             quelle[c] = "openfigi"
-                            # v49 (4b): ETF-Flag aus dem US-Composite-Eintrag
+                            # ETF-Flag aus dem US-Composite-Eintrag
                             # (securityType != 'Common Stock' / marketSector 'MarketSector/Market')
                             etf_map[c] = _is_etf_eintrag(eintrag) or out[c] in etf_set
                 except Exception as exc:
                     logger.warning("OpenFIGI-Mapping fehlgeschlagen (Chunk ab Index %d): %s", i, exc)
-    # v48: Fallback nameOfIssuer (normalisiert) gegen Titel aus company_tickers.json
+    # Fallback nameOfIssuer (normalisiert) gegen Titel aus company_tickers.json
     # (company_tickers.json enthaelt keine ETF-Titel -> dort kein ETF-Kriterium, nur config etf_ticker)
     if title_map:
         for c in rest:
@@ -596,7 +596,7 @@ def cusip_to_tickers(cusips: list[str], http: SecHttp, cfg: dict,
         now = datetime.now().isoformat(timespec="seconds")
         for c in rest:
             if c in out:
-                if has_etf_col:  # v49 (4b): is_etf dauerhaft speichern
+                if has_etf_col:  # is_etf dauerhaft speichern
                     con.execute(
                         "INSERT OR REPLACE INTO cusip_map (cusip, ticker, quelle, geladen_am, is_etf) "
                         "VALUES (?,?,?,?,?)",
@@ -649,7 +649,7 @@ def _parse_infotable(xml_bytes: bytes) -> tuple[list[dict], list[dict]]:
         except ValueError:
             value = float("nan")
         rec = {"cusip": cusip, "name": name, "shares": shares, "value": value,
-               "title": _t(it, "titleOfClass")}  # v49: titleOfClass (COMMON STOCK, BOND, ...)
+               "title": _t(it, "titleOfClass")}  # titleOfClass (COMMON STOCK, BOND, ...)
         if pc in ("PUT", "CALL"):
             rec["put_call"] = pc
             options.append(rec)
@@ -662,7 +662,7 @@ _ACCESSION_RE = re.compile(r"(\d{10}-\d{2}-\d{6})")
 
 
 def _normalize_date(s: str) -> str:
-    """v47: '2026-06-30' bleibt; US-Format '06-30-2026' (MM-DD-YYYY) -> '2026-06-30'.
+    """'2026-06-30' bleibt; US-Format '06-30-2026' (MM-DD-YYYY) -> '2026-06-30'.
     (Alt: quartal_of las '06-30-2026' als y=06, m=30 -> Label '06-Q10'.)"""
     s = (s or "").strip()[:10]
     parts = s.split("-")
@@ -672,7 +672,7 @@ def _normalize_date(s: str) -> str:
 
 
 def _accession_from_href(href: str) -> str:
-    r"""v45: Accession aus einem EDGAR-Atom-Link. Echtes Linkformat:
+    r"""Accession aus einem EDGAR-Atom-Link. Echtes Linkformat:
     .../Archives/edgar/data/<cik>/<accession-ohne-Bindestriche>/<accession-mit-Bindestrichen>-index.htm
     -> Regex (\d{10}-\d{2}-\d{6}) gewinnt, damit das '-index.htm'-Suffix nicht
     in die Accession gelangt. Fallback: letztes Pfadsegment ohne Index-Suffix."""
@@ -684,7 +684,7 @@ def _accession_from_href(href: str) -> str:
 
 
 def _accession_digits(accession: str) -> str:
-    r"""v45: Accession fuer den Archives-Pfad -- Bindestriche entfernen. Traegt der
+    r"""Accession fuer den Archives-Pfad -- Bindestriche entfernen. Traegt der
     Wert das Muster \d{10}-\d{2}-\d{6}, wird nur dieser Teil verwendet (Schutz gegen
     Suffixe wie '-index.htm': .../000119312526352200/index.json statt
     .../000119312526352200index.htm/index.json)."""
@@ -727,7 +727,7 @@ def _atom_entries(xml_bytes: bytes) -> list[dict]:
 
 
 def _submissions_entries(cik: str, http: SecHttp) -> list[dict]:
-    """v45: Primaere Filing-Liste -- https://data.sec.gov/submissions/CIK##########.json,
+    """Primaere Filing-Liste -- https://data.sec.gov/submissions/CIK##########.json,
     filings.recent (accessionNumber, form, filingDate, reportDate) als
     [{accession, filing_date, form, report_date}]. accessionNumber traegt
     Bindestriche (z. B. '0001193125-26-352200')."""
@@ -749,7 +749,7 @@ def _submissions_entries(cik: str, http: SecHttp) -> list[dict]:
 
 
 def _atom_filings(cik: str, http: SecHttp, type_param: str, count: int) -> list[dict]:
-    """v45: Fallback Filing-Liste per Atom-Feed (browse-edgar ...&output=atom)."""
+    """Fallback Filing-Liste per Atom-Feed (browse-edgar ...&output=atom)."""
     cik_n = str(int(str(cik).lstrip("0") or "0"))
     url = (f"{_sec_base()}/cgi-bin/browse-edgar?action=getcompany&CIK={cik_n}"
            f"&type={type_param}&dateb=&owner=include&count={count}&output=atom")
@@ -757,7 +757,7 @@ def _atom_filings(cik: str, http: SecHttp, type_param: str, count: int) -> list[
 
 
 def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dict]:
-    """v45: Letzte 13F-HR (+13F-HR/A) eines CIK. Primaer aus
+    """Letzte 13F-HR (+13F-HR/A) eines CIK. Primaer aus
     data.sec.gov/submissions/CIK##########.json (filings.recent), Atom-Feed nur
     noch Fallback. Bei Nachmeldung (A) ersetzt die neuere Fassung das Original
     zum selben report_date (neueste filing_date gewinnt)."""
@@ -770,7 +770,7 @@ def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dic
                        cik, exc)
         entries = _atom_filings(cik, http, "13F", max_filings * 3)
     hr = [e for e in entries if e["form"].startswith("13F-HR")]
-    # v47: Perioden-Schluessel = normalisiertes report_date (reportDate), Fallback
+    # Perioden-Schluessel = normalisiertes report_date (reportDate), Fallback
     # filing_date. 13F-HR + 13F-HR/A derselben Periode (auch gemischte Datumsformate)
     # ergeben EINEN Schluessel -- neueste filing_date gewinnt.
     # Diagnose v46: bei leerem report_date kollabierte die Dedupe und die Sortierung
@@ -788,7 +788,7 @@ def list_13f_filings(cik: str, http: SecHttp, max_filings: int = 12) -> list[dic
 
 
 def list_13d_filings(cik: str, http: SecHttp, max_filings: int = 20) -> list[dict]:
-    """v45: 13D/13D-A eines (aktivistischen) Filers:
+    """13D/13D-A eines (aktivistischen) Filers:
     [{accession, filing_date, form, report_date}]. Primaer submissions-JSON,
     Atom-Feed nur Fallback."""
     try:
@@ -803,7 +803,7 @@ def list_13d_filings(cik: str, http: SecHttp, max_filings: int = 20) -> list[dic
 
 
 def _retry_503(fn, http: SecHttp, retries: int = 3, waits=(5.0, 15.0, 30.0)):
-    """v46: 13D-Katalysatoren -- bei HTTP 503 dreimal wiederholen (5, 15, 30 s),
+    """13D-Katalysatoren -- bei HTTP 503 dreimal wiederholen (5, 15, 30 s),
     also Erstversuch + 3 Wiederholungen. Ein Fehlschlag nach allen Versuchen wird
     vom Aufrufer abgefangen und blockiert den Lauf nicht."""
     for attempt in range(1, retries + 2):
@@ -819,7 +819,7 @@ def _retry_503(fn, http: SecHttp, retries: int = 3, waits=(5.0, 15.0, 30.0)):
 
 
 def load_13f_quarter(cik: str, accession: str, http: SecHttp) -> tuple[str, list[dict], list[dict]]:
-    """v46: Laedt die infotable eines 13F. Rueckgabe: (report_date, holdings, options).
+    """Laedt die infotable eines 13F. Rueckgabe: (report_date, holdings, options).
 
     Die Infotabelle wird NICHT ueber einen festen Dateinamen bestimmt (404 bei
     abweichenden Namen wie form13fInfoTable.xml), sondern aus
@@ -904,7 +904,7 @@ def load_13d_target(cik: str, accession: str, http: SecHttp) -> tuple[str, str]:
 
 
 def quartal_of(report_date: str) -> str:
-    """v47: Quartalslabel AUSSCHLIESSLICH aus dem reportDate des Filings
+    """Quartalslabel AUSSCHLIESSLICH aus dem reportDate des Filings
     (2026-06-30 -> 2026-Q2). US-Format MM-DD-YYYY wird normalisiert. Leer -> ''."""
     rd = _normalize_date(report_date)
     if not rd:
@@ -933,7 +933,7 @@ def compare_quarters(prev: dict[str, dict], cur: dict[str, dict]) -> list[dict]:
             aktion, aend = "reduziert", h["shares"] / ps - 1.0
         else:
             aktion, aend = "unveraendert", 0.0
-        # v48: echte CUSIP mitfuehren (Schluessel von cur ist ggf. gemergter Ticker)
+        # echte CUSIP mitfuehren (Schluessel von cur ist ggf. gemergter Ticker)
         rows.append({"cusip": h.get("cusip") or cusip, "aktion": aktion, "aenderung_pct": aend,
                      "shares": h["shares"], "wert": h.get("value", h.get("wert", float("nan"))),
                      "name": h.get("name", ""), "title": h.get("title", "")})
@@ -949,17 +949,17 @@ def compare_quarters(prev: dict[str, dict], cur: dict[str, dict]) -> list[dict]:
 # DB
 # --------------------------------------------------------------------------
 
-# v49: Pflichtspalten der Migration -- fehlt eine, sind die Altzeilen nicht
+# Pflichtspalten der Migration -- fehlt eine, sind die Altzeilen nicht
 # zuverlaessig (Periodenlabel falsch) -> Tabelle wird verworfen und neu aufgebaut
 MIGRATION_PFLICHT_SPALTEN = ("periode", "accession", "report_date")
-# v49 (1c): store_quarter schreibt periode auch in smart_money_options; eine alte
+# store_quarter schreibt periode auch in smart_money_options; eine alte
 # Options-Tabelle (v42: Spalte quartal) ueberlebt sonst jedes CREATE IF NOT EXISTS
 OPTIONS_PFLICHT_SPALTEN = ("periode",)
 
 
 def _fehlende_pflichtspalten(con: sqlite3.Connection, table: str = "smart_money_positions",
                              spalten: tuple[str, ...] = MIGRATION_PFLICHT_SPALTEN) -> list[str]:
-    """v49 (1b/1c): PRAGMA table_info(<table>) -> fehlende Spalten aus `spalten`
+    """PRAGMA table_info(<table>) -> fehlende Spalten aus `spalten`
     (Default: smart_money_positions vs. MIGRATION_PFLICHT_SPALTEN =
     periode/accession/report_date)."""
     cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
@@ -968,7 +968,7 @@ def _fehlende_pflichtspalten(con: sqlite3.Connection, table: str = "smart_money_
 
 def _drop_wenn_veraltet(con: sqlite3.Connection, table: str, spalten: tuple[str, ...],
                         hinweis: str) -> None:
-    """v49 (1c): Tabelle `table` droppen, wenn sie existiert, aber Pflichtspalten fehlen
+    """Tabelle `table` droppen, wenn sie existiert, aber Pflichtspalten fehlen
     (sonst ueberlebt CREATE IF NOT EXISTS die alte Form -- z. B. Options-Tabelle v42
     mit Spalte quartal; store_quarter scheitert dann mit no such column: periode)."""
     exists = con.execute(
@@ -984,7 +984,7 @@ def _drop_wenn_veraltet(con: sqlite3.Connection, table: str, spalten: tuple[str,
 
 
 def _assert_positions_schema(con: sqlite3.Connection) -> None:
-    """v49 (1b/1c): Schema-Guard -- haben die (ggf. soeben neu angelegten) Tabellen
+    """Schema-Guard -- haben die (ggf. soeben neu angelegten) Tabellen
     wirklich das aktuelle Schema (Positionen: periode/accession/report_date;
     Optionen: periode)? Sonst sofort RuntimeError (kein Silent-Continue, kein
     Teil-Lauf): schema.sql ist veraltet oder fehlt -> Lauf abbrechen, Altzeilen
@@ -1001,7 +1001,7 @@ def _assert_positions_schema(con: sqlite3.Connection) -> None:
 
 
 def _migrate_positions(con: sqlite3.Connection) -> None:
-    """v49: Migration smart_money_positions. Per PRAGMA table_info werden die
+    """Migration smart_money_positions. Per PRAGMA table_info werden die
     Pflichtspalten (periode, accession, report_date) geprueft; fehlt eine, werden
     die Altzeilen verworfen (Perioden falsch) mit Hinweis im Log und die Tabelle
     aus schema.sql neu aufgebaut -- danach _assert_positions_schema (v49 1b).
@@ -1018,7 +1018,7 @@ def _migrate_positions(con: sqlite3.Connection) -> None:
         con.execute("DROP TABLE smart_money_positions")
         con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         con.commit()
-        _assert_positions_schema(con)  # v49 (1b): veraltete schema.sql -> RuntimeError statt Teil-Lauf
+        _assert_positions_schema(con)  # veraltete schema.sql -> RuntimeError statt Teil-Lauf
         return
     for col, decl in (("cusip", "TEXT NOT NULL DEFAULT ''"), ("name", "TEXT"), ("title_of_class", "TEXT")):
         if col not in cols:
@@ -1034,14 +1034,14 @@ def _migrate_positions(con: sqlite3.Connection) -> None:
                 con.execute("UPDATE smart_money_positions SET periode=? WHERE rowid=?", (np, rowid))
                 changed = True
             except sqlite3.IntegrityError:
-                pass  # v49: Relabel kollidiert mit vorhandener Periode -> Zeile bleibt (Duplikat)
+                pass  # Relabel kollidiert mit vorhandener Periode -> Zeile bleibt (Duplikat)
     if changed:
         con.commit()
 
 
 def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
-    # v49 (1c): alte Tabellenform (Pflichtspalten fehlen) vor dem Schema-Lauf droppen
+    # alte Tabellenform (Pflichtspalten fehlen) vor dem Schema-Lauf droppen
     # (sonst ueberlebt CREATE IF NOT EXISTS die alte Form und ein CREATE INDEX schlaegt
     # auf der fehlenden Spalte fehl); Altzeilen werden verworfen -- Hinweis im Log
     # siehe _drop_wenn_veraltet. Gilt fuer BEIDE Tabellen: smart_money_positions
@@ -1052,7 +1052,7 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     _drop_wenn_veraltet(con, "smart_money_options", OPTIONS_PFLICHT_SPALTEN, _hinweis)
     con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     con.commit()
-    # v49 (4b): additive Migration cusip_map.is_etf (ETF-Flag); frische DBs haben die
+    # additive Migration cusip_map.is_etf (ETF-Flag); frische DBs haben die
     # Spalte schon aus schema.sql, alte DBs bekommen sie per ALTER (Tabelle muss existieren --
     # bei veralteter schema.sql greift sonst der Schema-Guard unten mit RuntimeError)
     cols_cm = {r[1] for r in con.execute("PRAGMA table_info(cusip_map)")}
@@ -1060,7 +1060,7 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
         con.execute("ALTER TABLE cusip_map ADD COLUMN is_etf INTEGER NOT NULL DEFAULT 0")
         con.commit()
     _migrate_positions(con)
-    _assert_positions_schema(con)  # v49 (1b/1c): Endverifikation nach connect
+    _assert_positions_schema(con)  # Endverifikation nach connect
     return con
 
 
@@ -1070,7 +1070,7 @@ def store_quarter(con: sqlite3.Connection, fonds: str, periode: str, filing_datu
                   by_ticker_keys: list | None = None, report_date: str = "",
                   accession: str = "") -> int:
     """Schreibt ein (Fonds, Periode) in smart_money_positions + smart_money_options.
-    v48: eindeutiger Schluessel (fonds, periode, cusip, accession); eine andere
+    eindeutiger Schluessel (fonds, periode, cusip, accession); eine andere
     Accession derselben Periode (z. B. 13F-HR/A nach 13F-HR) wird zuerst
     entfernt -- nur die neueste Fassung zaehlt. ticker bleibt NULL, wenn der
     CUSIP nicht zuordenbar ist (cusip bleibt gespeichert)."""
@@ -1123,14 +1123,14 @@ def store_quarter(con: sqlite3.Connection, fonds: str, periode: str, filing_datu
 
 
 def periode_add(periode: str, k: int) -> str:
-    """v48: '2026-Q2' + k Quartale (k auch negativ). '2026-Q1' - 1 -> '2025-Q4'."""
+    """'2026-Q2' + k Quartale (k auch negativ). '2026-Q1' - 1 -> '2025-Q4'."""
     y, q = periode.split("-Q")
     t = int(y) * 4 + int(q) - 1 + k
     return f"{t // 4}-Q{t % 4 + 1}"
 
 
 def expected_periodes(newest: str, n: int) -> list[str]:
-    """v48: n aufeinanderfolgende Perioden endend bei `newest`, aufsteigend."""
+    """n aufeinanderfolgende Perioden endend bei `newest`, aufsteigend."""
     if not newest:
         return []
     return [periode_add(newest, -i) for i in range(n - 1, -1, -1)]
@@ -1138,7 +1138,7 @@ def expected_periodes(newest: str, n: int) -> list[str]:
 
 def completeness_check(con: sqlite3.Connection, fonds: str, newest_periode: str,
                        quarters: int = 8) -> dict:
-    """v48: Vollstaendigkeitspruefung je Fonds -- vorhandene Perioden, fehlende
+    """Vollstaendigkeitspruefung je Fonds -- vorhandene Perioden, fehlende
     Perioden (Luecken in den letzten `quarters` Perioden ab newest_periode),
     Anzahl Positionen je Periode, Warnung bei Luecken."""
     rows = con.execute(
@@ -1152,7 +1152,7 @@ def completeness_check(con: sqlite3.Connection, fonds: str, newest_periode: str,
             "erwartet": erwartet, "fehlend": fehlend, "warnung": bool(fehlend)}
 
 
-# v49: Vollstaendigkeitsschutz fuer score/overlap
+# Vollstaendigkeitsschutz fuer score/overlap
 PLAUSIBILITY_MAX_AGE_TAGE = 140   # neueste Periode aelter -> Abbruch
 PLAUSIBILITY_LETZTE_PERIODEN = 4  # Luecke in den letzten 4 Perioden -> Abbruch
 
@@ -1160,7 +1160,7 @@ PLAUSIBILITY_LETZTE_PERIODEN = 4  # Luecke in den letzten 4 Perioden -> Abbruch
 def plausibility_report(con: sqlite3.Connection, cfg: dict, heute: date | None = None,
                         max_age_tage: int = PLAUSIBILITY_MAX_AGE_TAGE,
                         letzte: int = PLAUSIBILITY_LETZTE_PERIODEN) -> list[dict]:
-    """v49: Je Fonds (config smart_money.funds): neueste Periode in der DB, deren
+    """Je Fonds (config smart_money.funds): neueste Periode in der DB, deren
     report_date/Alter, fehlende Perioden in den letzten `letzte` Perioden und ok.
     Die neueste Periode ist die Periode, die in die Berechnung einging."""
     heute = heute or date.today()
@@ -1184,7 +1184,7 @@ def plausibility_report(con: sqlite3.Connection, cfg: dict, heute: date | None =
         present = {r[0] for r in rows}
         fehlend = [p for p in expected_periodes(neueste, letzte) if p not in present]
         ok = (alter is None or alter <= max_age_tage) and not fehlend
-        gruende = []  # v49 (3b): expliziter Grund je Fonds fuer die Abbruchmeldung
+        gruende = []  # expliziter Grund je Fonds fuer die Abbruchmeldung
         if alter is not None and alter > max_age_tage:
             gruende.append(f"neueste Periode {neueste} ist {alter} Tage alt (> {max_age_tage} Tage)")
         if fehlend:
@@ -1196,7 +1196,7 @@ def plausibility_report(con: sqlite3.Connection, cfg: dict, heute: date | None =
 
 
 def plausibility_lines(rep: list[dict]) -> list[str]:
-    """v49: Ausgabe je Fonds -- nennt die Periode, die in die Berechnung einging."""
+    """Ausgabe je Fonds -- nennt die Periode, die in die Berechnung einging."""
     lines = []
     for r in rep:
         alt = f"{r['alter_tage']} Tage alt" if r["alter_tage"] is not None else "Datum unbekannt"
@@ -1211,7 +1211,7 @@ def plausibility_lines(rep: list[dict]) -> list[str]:
 
 def check_plausibility(con: sqlite3.Connection, cfg: dict, force: bool = False,
                        heute: date | None = None) -> list[dict]:
-    """v49 (3b): score/overlap brechen ab, wenn die neueste Periode eines Fonds aelter
+    """score/overlap brechen ab, wenn die neueste Periode eines Fonds aelter
     als 140 Tage ist oder in den letzten 4 Perioden eine fehlt. `--force` ueberstimmt
     ausschliesslich DIESE Pruefung -- Schema-Guard (RuntimeError) und User-Agent-Pruefung
     (UserAgentError) schlagen weiterhin hart durch. Ohne --force: SystemExit, je
@@ -1248,7 +1248,7 @@ def check_plausibility(con: sqlite3.Connection, cfg: dict, force: bool = False,
 
 
 def _nicht_aktienrelevant(cusip: str, title_of_class: str) -> bool:
-    """v49: Anleihen (BOND/NOTE/DEBENTURE in titleOfClass) und Nicht-US-Titel
+    """Anleihen (BOND/NOTE/DEBENTURE in titleOfClass) und Nicht-US-Titel
     (CUSIP-Laendercode keine Ziffer) sind nicht aktienrelevant -- in der
     Mapping-Uebersicht als solche markiert, zaehlen nicht als Fehler."""
     toc = (title_of_class or "").upper()
@@ -1261,7 +1261,7 @@ def _nicht_aktienrelevant(cusip: str, title_of_class: str) -> bool:
 
 def mapping_coverage(con: sqlite3.Connection, fonds: str | None = None,
                      top_n: int = 20) -> list[dict]:
-    """v49: Mapping-Abdeckung je Fonds -- Anteil der Positionen NACH WERT mit
+    """Mapping-Abdeckung je Fonds -- Anteil der Positionen NACH WERT mit
     Ticker (ticker IS NOT NULL; Ziel >= 95 % bei US-Aktien) plus die `top_n`
     groessten nicht zugeordneten Positionen (CUSIP, name, wert, title_of_class,
     Flag nicht_aktienrelevant fuer Anleihen/Optionen/Nicht-US)."""
@@ -1297,8 +1297,8 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
     """Laedt die letzten `quarters` Perioden je Fonds (13F-HR, A-Fassung gewinnt),
     speichert Positionen/Optionen, sammelt 13D-Katalysatoren der Aktivisten.
 
-    v48: `reset=True` leert smart_money_positions vorab (cusip_map bleibt) und
-    laedt die letzten Perioden neu; v49 (1c): beide Tabellen (Positionen + Optionen)
+    `reset=True` leert smart_money_positions vorab (cusip_map bleibt) und
+    laedt die letzten Perioden neu; beide Tabellen (Positionen + Optionen)
     werden per DROP + CREATE neu angelegt. Im `report` je Fonds zusaetzlich
     "completeness" (Vollstaendigkeitspruefung) und "mapping" (Abdeckung nach
     Wert mit Ticker).
@@ -1313,7 +1313,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
     r = sm.get("retry_403_429", sm.get("retry_429", {}))
     _waits = r.get("wartezeiten_s") or ([r["warte_s"]] * int(r.get("versuche", 3)) if "warte_s" in r else None)
     errors: list[dict] = []
-    # v44 (1): User-Agent aus smart_money.user_agent (Fallback sec.user_agent),
+    # User-Agent aus smart_money.user_agent (Fallback sec.user_agent),
     # validiert -- bei ungueltigem Wert Abbruch VOR dem ersten Request
     http = SecHttp(user_agent_from_cfg(cfg),
                    float(sm.get("max_requests_per_second", 5.0)),
@@ -1321,28 +1321,28 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                    fetcher=fetcher, errors=errors, sleeper=sleeper or time.sleep)
     con = connect(db_path)
     if reset:
-        # v49 (1c): fetch --reset -- BEIDE Tabellen per DROP TABLE IF EXISTS + CREATE
+        # fetch --reset -- BEIDE Tabellen per DROP TABLE IF EXISTS + CREATE
         # im aktuellen Schema neu anlegen (cusip_map bleibt erhalten), danach die
         # letzten Perioden neu laden
         con.execute("DROP TABLE IF EXISTS smart_money_positions")
         con.execute("DROP TABLE IF EXISTS smart_money_options")
         con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         con.commit()
-        _assert_positions_schema(con)  # v49 (1b/1c): veraltete schema.sql -> RuntimeError vor dem ersten Fonds
+        _assert_positions_schema(con)  # veraltete schema.sql -> RuntimeError vor dem ersten Fonds
         logger.info("smart_money: --reset -- smart_money_positions + smart_money_options per DROP+CREATE "
                     "neu angelegt (cusip_map bleibt)")
-    unmapped: list[str] = []  # v46: nicht zuordenbare CUSIPs -- einmal am Ende als Liste
-    all_titles: dict[str, str] = {}   # v49: cusip -> titleOfClass ( fuer nicht-aktienrelevant )
-    option_cusips: set = set()        # v49: CUSIPs der Optionen (zaehlen nicht als Fehler)
+    unmapped: list[str] = []  # nicht zuordenbare CUSIPs -- einmal am Ende als Liste
+    all_titles: dict[str, str] = {}   # cusip -> titleOfClass ( fuer nicht-aktienrelevant )
+    option_cusips: set = set()        # CUSIPs der Optionen (zaehlen nicht als Fehler)
     ciks = resolve_all_ciks(cfg, http)
     if report is not None:
         report.extend(ciks)
-    # v48: Titel aus company_tickers.json fuer den nameOfIssuer-Fallback (einmalig)
+    # Titel aus company_tickers.json fuer den nameOfIssuer-Fallback (einmalig)
     title_map = load_company_titles(http)
     funds = {f["name"]: f for f in sm.get("funds", [])}
     for entry in ciks:
         name, cik = entry["name"], entry["cik"]
-        http.fonds = name  # v45: HTTP-Fehler (403/429) im Fehlerlog dem Fonds zuordnen
+        http.fonds = name  # HTTP-Fehler (403/429) im Fehlerlog dem Fonds zuordnen
         if not cik:
             logger.warning("smart_money: %s -> %s -> uebersprungen (CIK manuell in config.yaml smart_money.funds eintragen; Treffer siehe Bericht)",
                            name, entry["filer_status"])
@@ -1356,10 +1356,10 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                 logger.warning("smart_money: %s (CIK %s) hat keine 13F-HR -> uebersprungen", name, cik)
                 errors.append({"fonds": name, "error": "keine 13F-HR gefunden"})
                 continue
-            entry["filings"] = filings[-8:]  # v46: letzte 8 Filings je Fonds im Bericht
+            entry["filings"] = filings[-8:]  # letzte 8 Filings je Fonds im Bericht
             qdata: list[tuple[str, str, str, list, list]] = []
             for f in filings:
-                http.accession = f["accession"]  # v46: Accession im HTTP-Fehlerlog
+                http.accession = f["accession"]  # Accession im HTTP-Fehlerlog
                 try:
                     rd, holdings, options = load_13f_quarter(cik, f["accession"], http)
                 except Exception as exc:
@@ -1368,7 +1368,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                     errors.append({"fonds": name, "accession": f["accession"],
                                    "error": str(exc)[:200]})
                     continue
-                # v47: Label-Datum AUSSCHLIESSLICH reportDate (submissions bevorzugt,
+                # Label-Datum AUSSCHLIESSLICH reportDate (submissions bevorzugt,
                 # Fallback periodOfReport aus dem XML); filing_date nur fuer Sortierung
                 qdata.append((f["report_date"] or rd, f["filing_date"], f["accession"], holdings, options))
             qdata.sort(key=lambda x: x[0] or x[1])
@@ -1387,7 +1387,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
             prev: dict[str, dict] = {}
             prev_total = None
             for report_date, filing_date, accession, holdings, options in qdata:
-                q = quartal_of(report_date)  # v48: Periode = Jahr-Qn exklusiv aus reportDate
+                q = quartal_of(report_date)  # Periode = Jahr-Qn exklusiv aus reportDate
                 # nach Ticker mergen (GOOGL->GOOG): shares + wert summieren
                 by_ticker: dict[str, dict] = {}
                 for h in holdings:
@@ -1403,7 +1403,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                                         "title": h.get("title", "")}
                 rows = compare_quarters(prev, by_ticker)
                 if not prev:
-                    # v49: aelteste geladene Periode je Fonds -> aktion "basis" (nie "neu");
+                    # aelteste geladene Periode je Fonds -> aktion "basis" (nie "neu");
                     # neu/erhoeht/reduziert/verkauft erst ab vorhandenem Vorquartal
                     for r in rows:
                         r["aktion"] = "basis"
@@ -1415,7 +1415,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
                 logger.info("smart_money: %s %s -> %d Positionen (%d Optionen)", name, q, n, len(options))
                 prev = by_ticker
                 prev_total = total
-            # v48: Vollstaendigkeitspruefung + Mapping-Abdeckung je Fonds (ab newester Periode)
+            # Vollstaendigkeitspruefung + Mapping-Abdeckung je Fonds (ab newester Periode)
             newest = max((quartal_of(f["report_date"] or "") for f in filings), default="")
             entry["completeness"] = completeness_check(con, name, newest, nq)
             cov = mapping_coverage(con, fonds=name)
@@ -1424,7 +1424,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
             # Aktivist: 13D/13D-A als Katalysator sammeln (gewicht 0)
             if fcfg.get("typ") == "aktivist" or float(gew) == 0.0:
                 try:
-                    # v46: bei HTTP 503 3x Retry (5, 15, 30 s); Fehlschlag blockiert nicht
+                    # bei HTTP 503 3x Retry (5, 15, 30 s); Fehlschlag blockiert nicht
                     for d in _retry_503(lambda: list_13d_filings(cik, http), http):
                         cusip, acc = _retry_503(lambda: load_13d_target(cik, d["accession"], http), http)
                         t = merge_tickers(cusip_to_tickers([cusip], http, cfg, con=con, unmapped=unmapped).get(cusip, cusip), cfg) if cusip else ""
@@ -1441,7 +1441,7 @@ def fetch_all(cfg: dict, quarters: int | None = None, db_path: Path = DB_PATH,
         except Exception as exc:
             logger.error("smart_money: Fehler bei %s (CIK %s): %s", name, cik, exc)
             errors.append({"fonds": name, "error": str(exc)[:200]})
-    # v49: nicht zuordenbare CUSIPs einmal am Ende als Liste; Anleihen, Optionen
+    # nicht zuordenbare CUSIPs einmal am Ende als Liste; Anleihen, Optionen
     # und Nicht-US-Titel zaehlen nicht als Fehler (nicht aktienrelevant)
     uniq_unmapped = list(dict.fromkeys(unmapped))
     aktien_unmapped = [c for c in uniq_unmapped
@@ -1479,7 +1479,7 @@ def rationale_exists(con: sqlite3.Connection, ticker: str) -> bool:
 
 
 def rationale_quelle(con: sqlite3.Connection, ticker: str) -> str:
-    """v49 (5): neueste quelle_url des Tickers, auf 40 Zeichen gekuerzt (Anzeige in
+    """neueste quelle_url des Tickers, auf 40 Zeichen gekuerzt (Anzeige in
     score/overlap als rationale_quelle -- Nachvollziehbarkeit ohne Blick in die DB)."""
     r = con.execute(
         "SELECT quelle_url FROM smart_money_rationale WHERE ticker=? ORDER BY datum DESC, id DESC LIMIT 1",
@@ -1488,7 +1488,7 @@ def rationale_quelle(con: sqlite3.Connection, ticker: str) -> str:
 
 
 def score4_kandidaten(con: sqlite3.Connection, cfg: dict) -> list[dict]:
-    """v49 (5): (Ticker, Fonds)-Kombinationen, die aktuell fuer Score 4 in Frage kommen --
+    """(Ticker, Fonds)-Kombinationen, die aktuell fuer Score 4 in Frage kommen --
     Score-3-Bedingung (config smart_money.rules) in den letzten ZWEI aufeinanderfolgenden
     Quartalen, aus der DB gelesen. Fonds = Kaeufer (neu/erhoeht, Gewicht > 0) des
     neuesten Quartals. Rueckgabe: Zeilen fuer die Import-Vorlage (text/quelle_url leer)."""
@@ -1523,13 +1523,13 @@ def score4_kandidaten(con: sqlite3.Connection, cfg: dict) -> list[dict]:
 
 
 def write_rationale_template(con: sqlite3.Connection, cfg: dict, out_path: str) -> int:
-    """v49 (5): Import-CSV-Vorlage schreiben -- Spalten ticker,fonds,text,quelle_url,datum,typ,
+    """Import-CSV-Vorlage schreiben -- Spalten ticker,fonds,text,quelle_url,datum,typ,
     je eine Zeile pro Score-4-Kandidat (ticker, fonds). Pflichtfelder (ticker, fonds, text,
     quelle_url) sind in der Vorlage leer markiert (Kommentar-Zeile oben); datum/typ optional
     (Default beim Import: heute, Sonstiges). Rueckgabe: Anzahl Zeilen."""
     rows = score4_kandidaten(con, cfg)
     with open(out_path, "w", newline="", encoding="utf-8") as f:
-        f.write("# v49 (5) Vorlage -- Pflichtfelder: ticker, fonds, text, quelle_url. "
+        f.write("# Vorlage -- Pflichtfelder: ticker, fonds, text, quelle_url. "
                 "text/quelle_url leer lassen, bis eine echte Quelle (Interview/Brief/13D) eingetragen ist "
                 "-- der Import bricht sonst mit Zeilennummer ab. datum/typ optional (Default: heute, Sonstiges).\n")
         w = csv.writer(f)
@@ -1565,7 +1565,7 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
         daten_alter = (heute - date.fromisoformat(filing_datum[:10])).days if filing_datum else None
     except ValueError:
         daten_alter = None
-    # v49 (4b): ETF/Index (config smart_money.etf_ticker oder cusip_map.is_etf) wird
+    # ETF/Index (config smart_money.etf_ticker oder cusip_map.is_etf) wird
     # NICHT gescored -- Score 1, keine Kaeufer/Verkaeufer, keine letzte_aktion;
     # filing_datum/daten_alter_tage bleiben echt (Transparenz, store_quarter speichert weiter)
     if is_etf_ticker(con, ticker, cfg):
@@ -1581,7 +1581,7 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
 
     quarters = sorted({r["periode"] for r in rows})
     last_q = quarters[-1]
-    last = [r for r in rows if r["periode"] == last_q and r["aktion"] != "basis"]  # v49: basis ignorieren
+    last = [r for r in rows if r["periode"] == last_q and r["aktion"] != "basis"]  # basis ignorieren
 
     def _gew(fonds: str) -> float:
         return _fonds_gewicht(cfg, fonds)
@@ -1595,7 +1595,7 @@ def smart_money_score(ticker: str, cfg: dict, db_path: Path = DB_PATH,
                          and (r["aenderung_pct"] is None or r["aenderung_pct"] <= -verk_schw)})
     letzte_aktion = "; ".join(f"{r['fonds']}:{r['aktion']}" for r in last)
     rat = rationale_exists(con, ticker)
-    rat_quelle = rationale_quelle(con, ticker) if rat else ""   # v49 (5): Anzeige in score/overlap
+    rat_quelle = rationale_quelle(con, ticker) if rat else ""   # Anzeige in score/overlap
     kat = katalysatoren(con, ticker)
     kat_str = "; ".join(f"{k['fonds']} {k['form']} {k['datum']}" for k in kat)
 
@@ -1675,7 +1675,7 @@ def load_ranking_csv(path: str) -> list[dict]:
 
 
 def load_watch_csv(path: str | None) -> list[str]:
-    """v49: Watchlist-CSV laden; BOM (utf-8-sig) und Leerzeichen werden getrimmt,
+    """Watchlist-CSV laden; BOM (utf-8-sig) und Leerzeichen werden getrimmt,
     leere Zeilen und #-Kommentare ignoriert, Ticker uppercased."""
     p = Path(path) if path else Path("ticker_watch_v40.csv")
     if not p.exists():
@@ -1696,16 +1696,16 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
     """Abgleich Screener x Smart Money; schreibt smart_money_overlap.csv.
 
     Ticker: alle Watchlist-Ticker + alle Ticker mit Fonds-Aktivitaet.
-    v49: Vollstaendigkeitsschutz -- Abbruch mit klarer Meldung, wenn die neueste
+    Vollstaendigkeitsschutz -- Abbruch mit klarer Meldung, wenn die neueste
     Periode eines Fonds aelter als 140 Tage ist oder in den letzten 4 Perioden
-    eine fehlt (--force ueberstimmt). v49 (3b): Die Ergebnis-CSV wird erst am
+    eine fehlt (--force ueberstimmt). Die Ergebnis-CSV wird erst am
     Ende geschrieben -- bricht der Guard ab (ohne --force), bleibt eine vorhandene
     Datei unveraendert; die Spalten bleiben mit --force unveraendert."""
     rows_in = load_ranking_csv(ranking_csv)
     by_t = {(r.get("ticker") or "").strip().upper(): r for r in rows_in}
     watch = load_watch_csv(watch_csv)
     con = connect(db_path)
-    check_plausibility(con, cfg, force=force, heute=heute)  # v49: Abbruch bei stale/lueckig
+    check_plausibility(con, cfg, force=force, heute=heute)  # Abbruch bei stale/lueckig
     con.row_factory = sqlite3.Row
     aktive = {r["ticker"] for r in con.execute(
         "SELECT DISTINCT ticker FROM smart_money_positions WHERE ticker IS NOT NULL")}
@@ -1714,7 +1714,7 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
     for t in tickers:
         row = by_t.get(t, {"ticker": t, "status_all": "", "quality": "", "mos_rule": ""})
         sm = smart_money_score(t, cfg, db_path=db_path)
-        # v49 (4b): ETF/Index-Zeile bleibt in der CSV (Abdeckung nachvollziehbar), aber
+        # ETF/Index-Zeile bleibt in der CSV (Abdeckung nachvollziehbar), aber
         # mit Score 1, Urteil neutral und Flag etf=ja (neue Spalte am Ende)
         etf_flag = is_etf_ticker(con, t, cfg)
         out.append({
@@ -1732,7 +1732,7 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
             "rationale_vorhanden": "ja" if sm["rationale_vorhanden"] else "nein",
             "smart_money_urteil": "neutral" if etf_flag else urteil(row, sm),
             "etf": "ja" if etf_flag else "",
-            # v49 (5): Quelle (erste 40 Zeichen der quelle_url) bei rationale_vorhanden=ja, neue Spalte am Ende
+            # Quelle (erste 40 Zeichen der quelle_url) bei rationale_vorhanden=ja, neue Spalte am Ende
             "rationale_quelle": sm.get("rationale_quelle", "") if sm["rationale_vorhanden"] else "",
         })
     cols = list(out[0].keys()) if out else ["ticker"]
@@ -1750,7 +1750,7 @@ def overlap(ranking_csv: str, watch_csv: str | None, cfg: dict,
 # --------------------------------------------------------------------------
 
 def print_fetch_report(report: list[dict], errors: list[dict]) -> None:
-    """v48: Ausgabe des fetch-Laufs: CIK/Filer-Status, Filings je Fonds, danach
+    """Ausgabe des fetch-Laufs: CIK/Filer-Status, Filings je Fonds, danach
     Vollstaendigkeitspruefung (Perioden, fehlende, Positionen, Warnung) und
     Mapping-Abdeckung je Fonds (Anteil nach Wert mit Ticker), dann Fehlerlog."""
     print("\n=== CIK-Aufloesung + Filer-Status (v44: config -> Firmensuche -> manuell) ===")
@@ -1760,12 +1760,12 @@ def print_fetch_report(report: list[dict], errors: list[dict]) -> None:
                  f" | letztes 13F-HR: {e.get('last_13f_hr') or '-'}" if e.get("cik") else ""))
         for t in (e.get("treffer") or []):
             print(f"      Treffer: cik={t['cik']} name={t['name']!r} letztes 13F-HR={t['last_13f_hr']}")
-        # v46: letzte 8 Filings je Fonds mit Label (aus reportDate), form, reportDate, filingDate, accession
+        # letzte 8 Filings je Fonds mit Label (aus reportDate), form, reportDate, filingDate, accession
         for f in (e.get("filings") or [])[-8:]:
-            label = quartal_of(f["report_date"])  # v48: Periode exklusiv aus reportDate
+            label = quartal_of(f["report_date"])  # Periode exklusiv aus reportDate
             print(f"      Filing: {label:<9} {f['form']:<9} report={f['report_date'] or '-'}"
                   f" filing={f['filing_date'] or '-'} acc={f['accession']}")
-        # v48: Vollstaendigkeitspruefung je Fonds (Perioden, fehlende, Positionen, Warnung)
+        # Vollstaendigkeitspruefung je Fonds (Perioden, fehlende, Positionen, Warnung)
         c = e.get("completeness") or {}
         if c:
             pos = ", ".join(f"{p}={n}" for p, n in sorted(c.get("positionen", {}).items()))
@@ -1773,7 +1773,7 @@ def print_fetch_report(report: list[dict], errors: list[dict]) -> None:
             warn = " WARNUNG: Luecken!" if c.get("warnung") else ""
             print(f"      Perioden: {', '.join(c.get('perioden') or []) or '-'}"
                   f" | fehlend: {fehl} | Positionen: {pos or '-'}{warn}")
-        # v49: Mapping-Abdeckung je Fonds (Anteil der Positionen nach Wert mit Ticker)
+        # Mapping-Abdeckung je Fonds (Anteil der Positionen nach Wert mit Ticker)
         # + die 20 groessten nicht zugeordneten Positionen
         m = e.get("mapping") or {}
         if m:
@@ -1810,7 +1810,7 @@ def cmd_score(args) -> None:
         tickers = [(r.get("ticker") or "").strip().upper() for r in rows]
     else:
         tickers = args.tickers
-    # v49: Vollstaendigkeitsschutz -- nennt je Fonds die Periode, die in die Berechnung einging
+    # Vollstaendigkeitsschutz -- nennt je Fonds die Periode, die in die Berechnung einging
     con = connect(Path(args.db))
     rep = check_plausibility(con, cfg, force=bool(getattr(args, "force", False)))
     print("Plausibilitaet je Fonds (neueste Periode geht in die Berechnung ein):")
@@ -1819,7 +1819,7 @@ def cmd_score(args) -> None:
     print(f"{'ticker':<8} {'score':>5} {'kaeufer':<30} {'verkaeufer':<20} {'alter_t':>7}  letzte_aktion / filing / katalysator / rationale")
     for t in tickers:
         s = smart_money_score(t, cfg, db_path=Path(args.db))
-        rat = f"ja {s['rationale_quelle']}" if s["rationale_vorhanden"] else "nein"  # v49 (5)
+        rat = f"ja {s['rationale_quelle']}" if s["rationale_vorhanden"] else "nein"  # 
         print(f"{t:<8} {s['score']:>5} {','.join(s['fonds_kaeufer']) or '-':<30} "
               f"{','.join(s['fonds_verkaeufer']) or '-':<20} "
               f"{str(s['daten_alter_tage'] if s['daten_alter_tage'] is not None else '-'):>7}  "
@@ -1841,7 +1841,7 @@ def cmd_overlap(args) -> None:
     for r in out:
         print(f"{r['ticker']:<8} {r['status_all'][:28]:<28} {r['smart_money_score']:>5} "
               f"{r['smart_money_urteil']:<14} {r['fonds_kaeufer'] or '-'} / {r['fonds_verkaeufer'] or '-'}")
-    # v49: Watch-Ticker ohne Fonds-Treffer ausdruecklich auflisten (nicht weglassen)
+    # Watch-Ticker ohne Fonds-Treffer ausdruecklich auflisten (nicht weglassen)
     aktive = {r[0] for r in con.execute(
         "SELECT DISTINCT ticker FROM smart_money_positions WHERE ticker IS NOT NULL")}
     watch = load_watch_csv(args.watch)
@@ -1866,7 +1866,7 @@ def cmd_ciks(args) -> None:
 def cmd_rationale_import(args) -> None:
     cfg = load_config()
     con = connect(Path(args.db))
-    # v49 (5): erst ALLE Zeilen validieren -- Pflichtfelder text + quelle_url; bei Fehlern
+    # erst ALLE Zeilen validieren -- Pflichtfelder text + quelle_url; bei Fehlern
     # Abbruch mit kompletter Fehlerliste (Zeilennummer = Dateizeile inkl. Header, fehlendes
     # Feld), es wird NICHTS importiert (kein Teil-Import). datum/typ optional
     # (Default: heute, Sonstiges). #-Kommentarzeilen (z. B. aus rationale-template) werden ignoriert.
@@ -1894,7 +1894,7 @@ def cmd_rationale_import(args) -> None:
                    "(echte Quelle: Interview/Brief/13D) -- siehe rationale-template.")
         raise SystemExit("\n".join(msg))
     for ticker, fonds, text, quelle, datum, typ in rows:
-        # v49 (5): Duplikat (ticker, fonds, quelle_url) ueberschreiben (INSERT OR REPLACE
+        # Duplikat (ticker, fonds, quelle_url) ueberschreiben (INSERT OR REPLACE
         # greift ueber idx_smr_unique), nicht doppelt anlegen
         con.execute(
             """INSERT OR REPLACE INTO smart_money_rationale (ticker, fonds, text, quelle_url, datum, typ)
@@ -1906,7 +1906,7 @@ def cmd_rationale_import(args) -> None:
 
 
 def cmd_rationale_template(args) -> None:
-    """v49 (5): Import-Vorlage schreiben -- je (Ticker, Fonds)-Kombination, die aktuell
+    """Import-Vorlage schreiben -- je (Ticker, Fonds)-Kombination, die aktuell
     fuer Score 4 in Frage kommt (Score-3-Bedingung in 2 aufeinanderfolgenden Quartalen)."""
     cfg = load_config()
     con = connect(Path(args.db))
@@ -1922,7 +1922,7 @@ def cmd_show(args) -> None:
     con = connect(Path(args.db))
     con.row_factory = sqlite3.Row
     if args.fonds:
-        # v48: Perioden + Anzahl der Positionen je Periode eines Fonds
+        # Perioden + Anzahl der Positionen je Periode eines Fonds
         rows = con.execute(
             "SELECT periode, COUNT(*) AS n, MAX(filing_datum) AS filing_datum "
             "FROM smart_money_positions WHERE fonds=? GROUP BY periode ORDER BY periode DESC",
@@ -1957,7 +1957,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_s.add_argument("tickers", nargs="*")
     p_s.add_argument("--ranking", default=None, help="ranking CSV (alle Ticker daraus)")
     p_s.add_argument("--force", action="store_true",
-                     help="v49 (3b): NUR den Vollstaendigkeitsschutz ueberstimmen (stale/lueckige "
+                     help="NUR den Vollstaendigkeitsschutz ueberstimmen (stale/lueckige "
                           "Perioden); Schema-Guard und User-Agent-Pruefung bleiben unberuehrt")
     p_s.set_defaults(func=cmd_score)
     p_o = sub.add_parser("overlap", help="Abgleich Screener x Smart Money -> smart_money_overlap.csv")
@@ -1965,7 +1965,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_o.add_argument("--watch", default=None, help="Watchlist-CSV (Default: ticker_watch_v40.csv falls vorhanden)")
     p_o.add_argument("--out", default="smart_money_overlap.csv")
     p_o.add_argument("--force", action="store_true",
-                     help="v49 (3b): NUR den Vollstaendigkeitsschutz ueberstimmen (stale/lueckige "
+                     help="NUR den Vollstaendigkeitsschutz ueberstimmen (stale/lueckige "
                           "Perioden); Schema-Guard und User-Agent-Pruefung bleiben unberuehrt")
     p_o.set_defaults(func=cmd_overlap)
     p_c = sub.add_parser("ciks", help="CIK-Aufloesung + 13F-Filer-Status aller Fonds")
@@ -1975,7 +1975,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                      help="Default: config smart_money.rationale_csv (rationale_import.csv)")
     p_r.set_defaults(func=cmd_rationale_import)
     p_rt = sub.add_parser("rationale-template",
-                          help="v49 (5): Import-Vorlage mit Score-4-Kandidaten schreiben")
+                          help="Import-Vorlage mit Score-4-Kandidaten schreiben")
     p_rt.add_argument("--out", default=None,
                       help="Default: config smart_money.rationale_csv (rationale_import.csv)")
     p_rt.set_defaults(func=cmd_rationale_template)

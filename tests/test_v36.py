@@ -69,7 +69,7 @@ def _cfg(cfg, sec_enabled=False):
     sec = dict(cfg2.get("sec", {}))
     sec["enabled"] = sec_enabled
     cfg2["sec"] = sec
-    # v40: captive_finance.tickers leeren, damit Capex-Tests nicht zusaetzlich
+    # captive_finance.tickers leeren, damit Capex-Tests nicht zusaetzlich
     # 'Pruefen (Captive Finance)' bekommen (CAT/DE stehen in der Config-Liste)
     cfg2["captive_finance"] = {"tickers": []}
     return cfg2
@@ -78,7 +78,7 @@ def _cfg(cfg, sec_enabled=False):
 # ---------- (1) Datenluecken nur fuer gelieferte Jahre ----------
 
 def test_datenluecke_nur_fuer_gelieferte_jahre(cfg):
-    """v36 (1): Ein Jahr ohne Statement-Spalte (fiscal_ends leer, keine Werte)
+    """Ein Jahr ohne Statement-Spalte (fiscal_ends leer, keine Werte)
     wird NICHT als Datenluecke gemeldet; ein geliefertes Jahr mit Luecke schon."""
     cfg2 = _cfg(cfg)
     m = _mk()
@@ -110,13 +110,13 @@ def _facts_capex(dev_years):
 
 
 def test_capex_pruefstatus_ab_2_jahren(cfg, monkeypatch):
-    """v36 (2): Capex weicht laut SEC in >= 2 Jahren um > 20 % ab ->
+    """Capex weicht laut SEC in >= 2 Jahren um > 20 % ab ->
     Status 'Pruefen (Capex-Definition)', nie Kandidat, Flag 'capex:pruefen'."""
     import data.sec as secmod
     cfg2 = _cfg(cfg, sec_enabled=True)
     m = _mk(ticker="CAT", mcap=2e11)  # guenstig -> waere sonst Kandidat
     monkeypatch.setattr(secmod, "_cik_for_ticker", lambda t: "0000018230")
-    # v37: Diff = |ours - ours/(1+dev)| = 0.75*ours (~5.1 Mrd.) > 10 % OCF (~3.8 Mrd.)
+    # Diff = |ours - ours/(1+dev)| = 0.75*ours (~5.1 Mrd.) > 10 % OCF (~3.8 Mrd.)
     monkeypatch.setattr(secmod, "_fetch_companyfacts",
                         lambda cik, ua: _facts_capex({2024: 3.0, 2023: 3.0}))
     out = evaluate_ticker(m, cfg2)
@@ -130,7 +130,7 @@ def test_capex_pruefstatus_ab_2_jahren(cfg, monkeypatch):
 
 
 def test_capex_unter_schwelle_kein_pruefstatus(cfg, monkeypatch):
-    """v37: 2 Jahre, aber Diff <= 10 % des OCF -> kein Pruefstatus; sowie nur
+    """2 Jahre, aber Diff <= 10 % des OCF -> kein Pruefstatus; sowie nur
     1 Jahr mit grossem Diff -> min_years=2 nicht erreicht."""
     import data.sec as secmod
     cfg2 = _cfg(cfg, sec_enabled=True)
@@ -157,7 +157,7 @@ def test_capex_schwelle_in_config(cfg):
     from pathlib import Path
     raw = yaml.safe_load((Path(__file__).resolve().parents[1] / "config.yaml")
                          .read_text(encoding="utf-8"))
-    # v37: Schwelle als Anteil des OCF (nicht mehr relativ zur Capex-Zahl)
+    # Schwelle als Anteil des OCF (nicht mehr relativ zur Capex-Zahl)
     assert raw["sec"]["capex_check"]["ocf_share"] == 0.10
     assert raw["sec"]["capex_check"]["min_years"] == 2
     assert raw["consistency"]["net_debt_mcap_share"] == 0.05
@@ -167,7 +167,7 @@ def test_capex_schwelle_in_config(cfg):
 # ---------- (3) Zykliker < 7 Jahre -> max. Beobachtung (nicht normalisiert) ----------
 
 def test_zykliker_unnorm_cappt_kandidat(cfg):
-    """v36 (3): Zykliker mit 5 Jahren (< 7) und Kandidat-Bedingungen ->
+    """Zykliker mit 5 Jahren (< 7) und Kandidat-Bedingungen ->
     Status 'Beobachtung (nicht normalisiert)', nie Kandidat."""
     cfg2 = _cfg(cfg)
     m = _mk(cyclicals=True, mcap=2e11)  # guenstig -> sonst Kandidat
@@ -181,7 +181,7 @@ def test_zykliker_unnorm_cappt_kandidat(cfg):
 # ---------- (4) MoS bei 10 % + robust ----------
 
 def test_mos_robust_spalte_und_robust_zusatz(cfg):
-    """v36 (4): Row traegt mos_robust (Base bei dcf.robust_discount_rate=10 %);
+    """Row traegt mos_robust (Base bei dcf.robust_discount_rate=10 %);
     guenstiger Ticker -> mos_robust >= 30 %; app-Status-Zusatz '(robust)'."""
     cfg2 = _cfg(cfg)
     m = _mk(mcap=2e11)  # Kurs 100 -> hoher MoS auch bei 10 %
@@ -209,7 +209,7 @@ def test_mos_robust_bei_sonderregel_na(cfg):
 # ---------- (5) Bilanz-Konsistenz: ND != Schulden - Cash (ADBE 2025) ----------
 
 def test_nd_inconsistent_flag(cfg):
-    """v36 (5): ND weicht um > 5 % der Marktkap. von Schulden-Cash ab -> Flag."""
+    """ND weicht um > 5 % der Marktkap. von Schulden-Cash ab -> Flag."""
     cfg2 = _cfg(cfg)
     m = _mk(ticker="ADBE", mcap=1e12, nd_gap=True)  # +30 % mcap Luecke in FY2025
     out = evaluate_ticker(m, cfg2)
@@ -234,7 +234,7 @@ def test_nd_consistent_kein_flag(cfg):
     ("ADBE", "Software - Infrastructure"), ("UBER", "Software - Application"),
 ])
 def test_regression_normalmodell(cfg, ticker, industry):
-    """v36 (7): PYPL/V/MA/ADBE/UBER bleiben im Normalmodell (standard), DCF berechnet."""
+    """PYPL/V/MA/ADBE/UBER bleiben im Normalmodell (standard), DCF berechnet."""
     cfg2 = _cfg(cfg)
     m = _mk(ticker=ticker, industry=industry)
     assert sector_rule(m, cfg2).group == "standard"

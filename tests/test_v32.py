@@ -190,7 +190,7 @@ def test_smoke_demo(cfg):
     cfg = dict(cfg)
     cfg["sec"] = {"enabled": False}
     rows, excluded = evaluate_all(demo_companies(), cfg)
-    # v38: DIST (negatives EK) wird nicht mehr wegen EK ausgeschlossen, sondern
+    # DIST (negatives EK) wird nicht mehr wegen EK ausgeschlossen, sondern
     # wegen Value-Trap -> weiterhin 4 bewertet / 2 ausgeschlossen
     assert len(rows) == 4 and len(excluded) == 2
     assert {e["ticker"] for e in excluded} == {"DIST", "MICR"}

@@ -31,7 +31,7 @@ from scoring.pipeline import evaluate_ticker
 from valuation.dcf import compute_dcf
 
 TICKERS = ["XOM", "DOW"]
-# v38 (2): Diagnose Ueberlauf bei hohem Wachstum -- optional per CLI:
+# Diagnose Ueberlauf bei hohem Wachstum -- optional per CLI:
 #   python rohwerte_check.py RDDT STT
 if len(sys.argv) > 1:
     TICKERS = [a.upper() for a in sys.argv[1:]]
@@ -51,7 +51,7 @@ def _pct(v: float) -> str:
 
 
 def fmt_szenario_vps(d) -> tuple[str, str, str]:
-    """v37 (2): Bear/Base/Bull als Text fuer die Modus-Tabelle.
+    """Bear/Base/Bull als Text fuer die Modus-Tabelle.
 
     Start-FCF <= 0 (d.fcf_le0) -> alle drei Szenarien "n/a (Start-FCF \u2264 0)"
     statt Zahlen (MoS ist dann nicht definiert)."""
@@ -67,7 +67,7 @@ def fmt_szenario_vps(d) -> tuple[str, str, str]:
 
 
 def fmt_scenario_growth(d) -> str:
-    """v37 (1): tatsaechliche Wachstumsraten J. 1-5 je Szenario aus DcfResult,
+    """tatsaechliche Wachstumsraten J. 1-5 je Szenario aus DcfResult,
     z. B. "Bear -9.7%, Base -6.7%, Bull 0.0%" (CAGR < 0) bzw. "Bear 0.0%, ..."."""
     sg = getattr(d, "scenario_growth", None) or {}
     parts = []
@@ -78,7 +78,7 @@ def fmt_scenario_growth(d) -> str:
 
 
 def erklaerung_xom(xo: dict) -> list[str]:
-    """v37 (1): 3 Saetze XOM -- nennt die tatsaechlichen Wachstumsraten je Szenario
+    """3 Saetze XOM -- nennt die tatsaechlichen Wachstumsraten je Szenario
     aus der DCF-Funktion (DcfResult.scenario_growth), nicht den Festtext."""
     modes = xo["modes"].values()
     vps = [d.scenarios["base"].value_per_share for d in modes
@@ -179,13 +179,13 @@ def main() -> None:
         w(f"  {'Modus':<10} {'Start-FCF':>12} {'Wert/Aktie Bear':>16} {'Base':>10} {'Bull':>10} {'MoS Base':>10} {'MoS bei 10%':>12}")
         for mode in ("avg3", "latest", "ttm", "ttm_only"):
             d = compute_dcf(m, cfg, fcf_mode=mode)
-            # v37 (2): Start-FCF <= 0 -> "n/a (Start-FCF <= 0)" statt Zahlen
+            # Start-FCF <= 0 -> "n/a (Start-FCF <= 0)" statt Zahlen
             bear_s, base_s, bull_s = fmt_szenario_vps(d)
             w(f"  {mode:<10} {_mrd(d.fcf_normalized):>12} {bear_s:>16} {base_s:>10} {bull_s:>10} {_pct(d.margin_of_safety):>10}"
               f" {_pct(row['mos_robust'] if mode == dcf.fcf_mode else float('nan')):>12}")
         w(f"  aktiver Modus (dcf.fcf_mode={dcf.fcf_mode}): MoS Base {_pct(row['margin_of_safety'])}, MoS bei 10 % (robust) {_pct(row['mos_robust'])}")
         w(f"  Umsatz-CAGR (Basis-Wachstum): {_pct(dcf.revenue_cagr)} | Diskontsatz {_pct(dcf.discount_rate)} | Terminal Growth {_pct(dcf.terminal_growth)}")
-        # v39 (2): Szenario-Wachstumsraten J. 1-5 (tatsaechlich, aus DcfResult)
+        # Szenario-Wachstumsraten J. 1-5 (tatsaechlich, aus DcfResult)
         w(f"  Szenario-Wachstum J. 1-5 (tatsaechlich): {fmt_scenario_growth(dcf)}")
         w("")
         # --- EBIT / Steuersatz / NOPAT / EK / ROIC je Jahr ---
@@ -227,7 +227,7 @@ def main() -> None:
     # XOM-Werte dynamisch aus dem Lauf (statt hartkodiert)
     xom = next((m for m in _LAST if m.ticker == "XOM"), None)
     if xom is not None and "XOM" in _LAST_OUT:
-        # v37 (1): Erklaerung nennt die tatsaechlichen Wachstumsraten je Szenario
+        # Erklaerung nennt die tatsaechlichen Wachstumsraten je Szenario
         # aus DcfResult.scenario_growth (z. B. "Bear -9.7%, Base -6.7%, Bull 0.0%")
         for line in erklaerung_xom(_LAST_OUT["XOM"]):
             w(line)

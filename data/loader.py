@@ -32,20 +32,20 @@ class TickerMetrics:
     ticker: str
     name: str = ""
     sector: str = ""
-    industry: str = ""   # v28: Branchen-Feld (GICS Industry) -- Sektorregeln (Banken/Versicherer/Zykliker/REIT)
+    industry: str = ""   # Branchen-Feld (GICS Industry) -- Sektorregeln (Banken/Versicherer/Zykliker/REIT)
     country: str = ""
     source: str = ""  # Datenquelle: fmp | yfinance | demo
-    # v28: Zusatzkennzahlen fuer Sektorregeln (Banken/Versicherer: P/B,
+    # Zusatzkennzahlen fuer Sektorregeln (Banken/Versicherer: P/B,
     # Dividendenrendite; REITs: FFO-Hinweis). Je Kennzahl eine Metric.
     extras: dict[str, Metric] = field(default_factory=dict)
     market_cap: Metric | None = None
     market_cap_date: str = ""  # Stichtag der Marktkapitalisierung (ISO-Datum, Abrufdatum)
-    # v41 (0): naechster Earnings-Termin (ISO-Datum), falls der Provider ihn liefert
+    # naechster Earnings-Termin (ISO-Datum), falls der Provider ihn liefert
     next_earnings_date: str = ""
     years: dict[str, dict[str, Metric]] = field(default_factory=dict)
     # TTM (Quartalsdaten): Flussgroessen = Summe letzte 4 Quartale,
     # Bestandsgoessen = Stichtag letztes Quartal (nur yfinance-Provider).
-    # v29: EBITDA unplausibel (EBITDA < EBIT in mind. einem Jahr) -> Flag + ND/EBITDA n/a
+    # EBITDA unplausibel (EBITDA < EBIT in mind. einem Jahr) -> Flag + ND/EBITDA n/a
     ebitda_unplausible: bool = False
     ttm: object | None = None            # data.ttm.TtmResult
     ttm_plausible: bool = True           # False -> Flag "Quartalsdaten unplausibel"
@@ -141,11 +141,11 @@ def extract_metrics(
     if profile:
         result.name = profile.get("companyName", "")
         result.sector = profile.get("sector", "") or "Unbekannt"
-        # v28: Industry separat (FMP: 'industry'; yfinance: uebergeben als industry)
+        # Industry separat (FMP: 'industry'; yfinance: uebergeben als industry)
         result.industry = profile.get("industry", "") or ""
         result.country = profile.get("country", "") or ""
         mcap = profile.get("mktCap", profile.get("marketCap"))
-        # v28: Zusatzkennzahlen (P/B, Dividendenrendite, FFO, ...) aus dem Profil
+        # Zusatzkennzahlen (P/B, Dividendenrendite, FFO, ...) aus dem Profil
         for key in ("price_to_book", "dividend_yield", "ffo_per_share", "ffo"):
             raw = profile.get(key)
             if raw is not None:
@@ -210,7 +210,7 @@ def extract_metrics(
             name: _metric(name, raw, unit, currency, fy) for name, (raw, unit) in defs.items()
         }
 
-        # v29: EBITDA = EBIT + Abschreibungen (D&A) aus dem Cashflow-Statement,
+        # EBITDA = EBIT + Abschreibungen (D&A) aus dem Cashflow-Statement,
         # NICHT das gemeldete Yahoo/FMP-EBITDA-Feld (das weicht teils ab).
         # Fallback nur wenn kein D&A gemeldet: gemeldetes EBITDA.
         ebit_v = year_metrics["ebit"].value

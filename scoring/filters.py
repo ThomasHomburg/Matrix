@@ -44,7 +44,7 @@ def check_filters(m: TickerMetrics, cfg: dict) -> list[str]:
     else:
         reasons.append("Marktkapitalisierung unbekannt")
 
-    # v29: Jahre mit tatsaechlichen Werten zaehlen, nicht vorhandene Spalten
+    # Jahre mit tatsaechlichen Werten zaehlen, nicht vorhandene Spalten
     n_val_years = count_value_years(m)
     if n_val_years < cfg["min_history_years"]:
         reasons.append(f"Historie {n_val_years} J. mit Werten < {cfg['min_history_years']} J.")
@@ -55,7 +55,7 @@ def check_filters(m: TickerMetrics, cfg: dict) -> list[str]:
     if len(fcf_vals) >= 5 and _avg(fcf_vals[-5:]) < cfg["min_avg_fcf_5y_usd"]:
         reasons.append("Negativer Durchschnitts-FCF (5 J.)")
 
-    # v38 (1): negativer EK schliesst nur aus, wenn exclusion.negative_equity: true
+    # negativer EK schliesst nur aus, wenn exclusion.negative_equity: true
     # (alte Verhalten). Sonst wird der Ticker normal bewertet + Flag "ek_negativ".
     if bool(cfg.get("exclusion", {}).get("negative_equity", False)):
         latest_equity = m.latest("equity")

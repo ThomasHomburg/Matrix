@@ -99,7 +99,7 @@ def test_excluded_table_carries_history_years(cfg):
         assert isinstance(e["history_years"], int)
     gruende = {e["ticker"]: e for e in excluded}
     # DIST und MICR haben 5 Jahre mit Werten -> anderer Grund
-    # v38: DIST wegen Value-Trap (negatives EK schliesst nicht mehr aus)
+    # DIST wegen Value-Trap (negatives EK schliesst nicht mehr aus)
     assert gruende["DIST"]["history_years"] == 5
     assert any("Durchschnitts-FCF" in r for r in gruende["DIST"]["reasons"])  # v38
     assert gruende["MICR"]["history_years"] == 5

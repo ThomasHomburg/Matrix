@@ -1,7 +1,7 @@
 r"""
 (v49 3b) --force fuer score/overlap (nur lokale Fixture-DBs, kein Netz):
 
-Kontext: der v49 (3)-Vollstaendigkeitsschutz brach score/overlap ab, wenn ein Fonds
+Kontext: der Vollstaendigkeitsschutz brach score/overlap ab, wenn ein Fonds
 die Pruefung nicht bestand (z. B. Pershing Square: neueste Periode alt > 140 Tage
 und/oder Periodenluecke) -- die alte Ergebnis-CSV blieb dadurch unveraendert stehen.
 --force uebersteuert ausschliesslich DIESEN Abbruch.
@@ -40,7 +40,7 @@ def _rd(periode: str) -> str:
 
 OVERLAP_COLS = ("ticker,status_all,quality,mos_rule,smart_money_score,fonds_kaeufer,"
                 "fonds_verkaeufer,letzte_aktion,filing_datum,daten_alter_tage,"
-                "katalysator_13d,rationale_vorhanden,smart_money_urteil,etf,rationale_quelle")  # v49 (4b): etf; v49 (5): rationale_quelle am Ende
+                "katalysator_13d,rationale_vorhanden,smart_money_urteil,etf,rationale_quelle")  # etf; : rationale_quelle am Ende
 
 
 def _cfg():

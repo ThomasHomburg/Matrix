@@ -21,12 +21,12 @@ from scoring.pipeline import evaluate_ticker
 from scoring.score import score_ticker
 from valuation.dcf import compute_dcf
 
-# v37: wiederverwendete Mocks aus test_v36 (gleiche synthetische Bilanzdaten)
+# wiederverwendete Mocks aus test_
 from tests.test_v36 import _cfg, _facts_capex, _mk
 
 
 def _cfg_v40(cfg, sec_enabled=False):
-    """v40: wie _cfg, aber captive_finance.tickers geleert (sonst waere CAT/DE
+    """wie _cfg, aber captive_finance.tickers geleert (sonst waere CAT/DE
     zusaetzlich 'Pruefen (Captive Finance)')."""
     cfg2 = _cfg(cfg, sec_enabled=sec_enabled)
     cfg2["captive_finance"] = {"tickers": []}
@@ -69,8 +69,8 @@ def _mk_cagr(cagr: float, fcf: float = 20e9) -> TickerMetrics:
 
 @pytest.mark.parametrize("cagr", [-0.10, 0.0, 0.04, 0.12, 0.30, 0.60, 1.20])
 def test_wert_je_aktie_bear_le_base_le_bull(cagr):
-    """v37 (1): Wert je Aktie Bear <= Base <= Bull fuer CAGR -10/0/4/12 %.
-    v38 (2): erweitert um CAGR 30 %, 60 %, 120 % (hohes Wachstum, Caps greifen)."""
+    """Wert je Aktie Bear <= Base <= Bull fuer CAGR -10/0/4/12 %.
+    erweitert um CAGR 30 %, 60 %, 120 % (hohes Wachstum, Caps greifen)."""
     m = _mk_cagr(cagr)
     res = compute_dcf(m, DCF_CFG, fcf_mode="latest")
     assert res.revenue_cagr == pytest.approx(cagr, abs=1e-9)
@@ -84,7 +84,7 @@ def test_wert_je_aktie_bear_le_base_le_bull(cagr):
 
 @pytest.mark.parametrize("cagr", [0.30, 0.60, 1.20])
 def test_wert_je_aktie_bear_le_base_le_bull_kleiner_fcf(cagr):
-    """v38 (2): derselbe Check bei sehr kleinem positivem Start-FCF (1 Mio. USD)
+    """derselbe Check bei sehr kleinem positivem Start-FCF (1 Mio. USD)
     -- Skalierung des Start-FCF darf die Szenario-Reihenfolge nicht kippen."""
     m = _mk_cagr(cagr, fcf=1e6)
     res = compute_dcf(m, DCF_CFG, fcf_mode="latest")
@@ -104,7 +104,7 @@ def test_wert_je_aktie_bear_le_base_le_bull_kleiner_fcf(cagr):
     (0.12, 0.0, 0.06, 0.10),      # Caps greifen: Base 6 %, Bull 10 %
 ])
 def test_scenario_growth_je_cagr(cagr, exp_bear, exp_base, exp_bull):
-    """v37 (1): scenario_growth enthaelt die tatsaechlichen Wachstumsraten."""
+    """scenario_growth enthaelt die tatsaechlichen Wachstumsraten."""
     m = _mk_cagr(cagr)
     res = compute_dcf(m, DCF_CFG, fcf_mode="latest")
     assert res.scenario_growth["bear"] == pytest.approx(exp_bear, abs=1e-9)
@@ -161,7 +161,7 @@ def _mk_dow_like() -> TickerMetrics:
 
 
 def test_dow_quality_score_trotz_value_luecken(cfg):
-    """v37 (2): DOW-aehnlich -- Value-Block komplett n/a (keine Marktkap.),
+    """DOW-aehnlich -- Value-Block komplett n/a (keine Marktkap.),
     Gesamtabdeckung < 70 %, aber Quality-Abdeckung = 100 % -> Quality-Score
     wird geliefert (in v34 wurde Quality hier fälschlich n/a)."""
     m = _mk_dow_like()
@@ -210,7 +210,7 @@ def test_row_traegt_quality_coverage(cfg):
 
 def _run_capex(cfg, monkeypatch, ticker, cik, dev_years):
     import data.sec as secmod
-    cfg2 = _cfg_v40(cfg, sec_enabled=True)  # v40: ohne captive_finance
+    cfg2 = _cfg_v40(cfg, sec_enabled=True)  # ohne captive_finance
     m = _mk(ticker=ticker, mcap=2e11)
     monkeypatch.setattr(secmod, "_cik_for_ticker", lambda t: cik)
     monkeypatch.setattr(secmod, "_fetch_companyfacts",
@@ -219,7 +219,7 @@ def _run_capex(cfg, monkeypatch, ticker, cik, dev_years):
 
 
 def test_ma_ohne_pruefstatus(cfg, monkeypatch):
-    """v37 (3): MA -- SEC-Capex nahe an Yahoo (Diff < 10 % des OCF in allen
+    """MA -- SEC-Capex nahe an Yahoo (Diff < 10 % des OCF in allen
     Jahren) -> KEIN Pruefstatus."""
     out = _run_capex(cfg, monkeypatch, "MA", "0000169331",
                      {2025: 0.05, 2024: 0.05, 2023: 0.05})
@@ -230,7 +230,7 @@ def test_ma_ohne_pruefstatus(cfg, monkeypatch):
 
 
 def test_cat_mit_pruefstatus(cfg, monkeypatch):
-    """v37 (3): CAT -- Diff > 10 % des OCF in 2 Jahren -> Pruefstatus, nie Kandidat."""
+    """CAT -- Diff > 10 % des OCF in 2 Jahren -> Pruefstatus, nie Kandidat."""
     out = _run_capex(cfg, monkeypatch, "CAT", "0000018230",
                      {2025: 3.0, 2024: 3.0})
     row = out["row"]
@@ -246,7 +246,7 @@ def test_cat_mit_pruefstatus(cfg, monkeypatch):
 
 
 def test_de_mit_pruefstatus(cfg, monkeypatch):
-    """v37 (3): DE -- Diff > 10 % des OCF in 2 Jahren -> Pruefstatus."""
+    """DE -- Diff > 10 % des OCF in 2 Jahren -> Pruefstatus."""
     out = _run_capex(cfg, monkeypatch, "DE", "0000106047",
                      {2025: 3.0, 2023: 3.0})
     row = out["row"]
@@ -256,7 +256,7 @@ def test_de_mit_pruefstatus(cfg, monkeypatch):
 
 
 def test_capex_diff_unter_10_prozent_ocf_kein_status(cfg, monkeypatch):
-    """v37 (3): 2 Jahre mit Abweichung, aber Diff <= 10 % des OCF
+    """2 Jahre mit Abweichung, aber Diff <= 10 % des OCF
     (dev 0.10 -> Diff ~0.45 % Umsatz < 2.8 % Umsatz = 10 % OCF) -> kein Status."""
     out = _run_capex(cfg, monkeypatch, "DE", "0000106047",
                      {2025: 0.10, 2024: 0.10})
@@ -266,7 +266,7 @@ def test_capex_diff_unter_10_prozent_ocf_kein_status(cfg, monkeypatch):
 
 
 def test_format_sec_detail_mit_ocf(cfg):
-    """v37 (3): format_sec_detail mit ocf_by_fy liefert Yahoo/SEC-Capex in
+    """format_sec_detail mit ocf_by_fy liefert Yahoo/SEC-Capex in
     Mrd. USD und Diff in % des OCF je Jahr."""
     from data.sec import format_sec_detail
     devs = [{"fy": 2024, "key": "capex", "ours": -5.0e9, "sec": -1.25e9, "dev": 3.0}]

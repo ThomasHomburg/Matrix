@@ -1,7 +1,7 @@
-"""v41 (3): Live-Bewertung der Watchlist (live_update.py --ranking <csv>).
+"""Live-Bewertung der Watchlist (live_update.py --ranking <csv>).
 
 Screener-Logik bleibt unveraendert -- dieses Modul liest die ranking-CSV
-(v41 (0) Export-Spalten: kurs, calc_date, iv_*, naechster_earnings, ...) und
+(kurs, calc_date, iv_*, naechster_earnings, ...) und
 bewertet die Watchlist-Titel mit dem AKTUELLEN Tagesschlusskurs.
 
 Aufruf:
@@ -61,7 +61,7 @@ OUT_COLS = ["ticker", "kurs", "status_screener", "status_live",
             "mos_live_min", "mos_live_robust", "kaufzone_kurs", "distanz_pct",
             "timing_status", "mom_12_1", "abstand_sma200", "revision_90d",
             "wert_veraltet", "alarm", "naechster_earnings",
-            # v42 (4): Smart Money
+            # Smart Money
             "smart_money_score", "fonds_kaeufer", "fonds_verkaeufer",
             "letzte_aktion", "filing_datum", "rationale_vorhanden"]
 
@@ -264,7 +264,7 @@ def live_row(row: dict, kurs: float, cfg: dict, heute: date | None = None,
         "wert_veraltet": int(wert_veraltet),
         "alarm": int(alarm),
         "naechster_earnings": ne,
-        # v42 (4): Smart-Money-Spalten (DB optional -- ohne DB n/a)
+        # Smart-Money-Spalten (DB optional -- ohne DB n/a)
         "smart_money_score": "n/a",
         "fonds_kaeufer": "",
         "fonds_verkaeufer": "",
@@ -275,7 +275,7 @@ def live_row(row: dict, kurs: float, cfg: dict, heute: date | None = None,
 
 
 def attach_smart_money(out_rows: list[dict], cfg: dict, db_path: Path = Path("value_tracker.db")) -> None:
-    """v42 (4): fuellt die smart_money-Spalten je Watchlist-Ticker aus der DB
+    """fuellt die smart_money-Spalten je Watchlist-Ticker aus der DB
     (smart_money_score). Ohne DB bleiben die Spalten 'n/a'."""
     if not db_path.exists():
         return

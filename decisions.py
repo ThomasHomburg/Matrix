@@ -1,4 +1,4 @@
-"""v41 (2): Entscheidungslog (decisions.py) -- SQLite value_tracker.db.
+"""Entscheidungslog (decisions.py) -- SQLite value_tracker.db.
 
 Screener-Logik bleibt unveraendert; dieses Modul ist reine Ablage/Protokoll.
 
@@ -72,7 +72,7 @@ def _parse_date(s: str) -> date:
 # --------------------------------------------------------------------------
 
 def _row_aus_ranking(ranking_csv: str | None, ticker: str) -> dict | None:
-    """Zeile eines Tickers aus der ranking-CSV (v41 (0) Export-Spalten)."""
+    """Zeile eines Tickers aus der ranking-CSV (Export-Spalten)."""
     if not ranking_csv or not Path(ranking_csv).exists():
         return None
     with open(ranking_csv, newline="", encoding="utf-8") as f:

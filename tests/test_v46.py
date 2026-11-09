@@ -170,7 +170,7 @@ def test_openfigi_23_cusips_5_anfragen_ohne_key_und_dauerhaft(monkeypatch):
     def fetcher(url: str) -> bytes:
         calls.append(url)
         n = len(calls)
-        # v49 (4a): echte OpenFIGI-Struktur {"data": [{... US-Eintrag ...}]} je Eingabe
+        # echte OpenFIGI-Struktur {"data": [{... US-Eintrag ...}]} je Eingabe
         return json.dumps([{"data": [{"ticker": f"T{n}_{i}", "exchCode": "US"}]} for i in range(5)]).encode()
 
     http = smart_money.SecHttp(VALID_UA, max_rps=100000, fetcher=fetcher, sleeper=lambda s: None)
@@ -248,7 +248,7 @@ def test_unmapped_einmalig_als_liste(monkeypatch):
                                        errors=errors, unmapped=unmapped)
     assert unmapped == ["222222222"]
     assert errors == []                                        # nicht als Einzelzeilen
-    assert "222222222" not in out                              # v48: Miss -> nicht im Ergebnis (ticker NULL in DB)
+    assert "222222222" not in out                              # Miss -> nicht im Ergebnis (ticker NULL in DB)
 
 
 # --------------------------------------------------------------------------
@@ -381,7 +381,7 @@ def test_13d_503_blockiert_lauf_nicht(tmp_path):
     assert n == 1                     # Lauf nicht blockiert, Position gespeichert
     assert con.execute("SELECT COUNT(*) FROM smart_money_katalysator").fetchone()[0] == 0
     assert not [e for e in errors if e.get("fonds") == "Starboard Value"]
-    # v46: Filing-Liste (letzte 8) je Fonds im Bericht
+    # Filing-Liste (letzte 8) je Fonds im Bericht
     assert report and report[0].get("filings")
     f0 = report[0]["filings"][-1]
     assert f0["form"] == "13F-HR" and f0["accession"] == "0001517137-26-000001"

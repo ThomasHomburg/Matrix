@@ -191,7 +191,7 @@ def _qframes(quarters, ocf_per_q, capex_per_q, sbc_per_q, fcf_per_q=None):
 
 
 def test_ttm_quarters_letzte_8_mit_stichtag_und_yoy():
-    """v30: TtmResult.quarters: bis zu 8 neueste Quartale (neuestes zuerst),
+    """TtmResult.quarters: bis zu 8 neueste Quartale (neuestes zuerst),
     inkl. YoY (FCF-SBC vs. Vorjahresquartal, 4 Quartale zurueck)."""
     quarters = [pd.Timestamp("2026-08-31"), pd.Timestamp("2026-05-31"),
                 pd.Timestamp("2026-02-28"), pd.Timestamp("2025-11-30"),
@@ -374,7 +374,7 @@ V26_ROW_COLUMNS = {
     "mos_avg3", "mos_latest", "mos_ttm", "mos_rule", "mos_rule_mode",
     "mos_base_alt_nd", "dcf_net_debt_mode", "dcf_net_debt_alt",
     "dcf_net_debt_alt_source", "sec_check_ok", "sec_check_flag", "sec_check_note",
-    # v27
+    #
     "mos_ttm_only", "status", "status_detail",
 }
 

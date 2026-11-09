@@ -94,7 +94,7 @@ def _make_fetcher(entries, holdings_by_acc, openfigi=False):
         if "openfigi" in url:
             if not openfigi:
                 raise ValueError(url)
-            return json.dumps([{"data": [{"ticker": "AAA", "exchCode": "US"}]}]).encode()  # v49 (4a): echte Struktur
+            return json.dumps([{"data": [{"ticker": "AAA", "exchCode": "US"}]}]).encode()  # echte Struktur
         if url.endswith("/index.json"):
             return _index_json(["primary_doc.xml", "infotable.xml"])
         if url.endswith("infotable.xml"):

@@ -1,4 +1,4 @@
--- v41 (1): Datenhaltung des Value-Screeners in SQLite (value_tracker.db).
+-- Datenhaltung des Value-Screeners in SQLite (value_tracker.db).
 -- Reine Ablage -- die Screener-Logik bleibt unveraendert (neues Modul).
 --
 -- value_tracker.db anlegen:
@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_prices_ticker_datum ON prices (ticker, datum);
 CREATE TABLE IF NOT EXISTS valuations (
     ticker          TEXT NOT NULL,
     calc_date       TEXT NOT NULL,             -- ISO-Datum der Bewertung
-    kurs            REAL,                      -- Kurs bei calc_date (Export v41 (0))
+    kurs            REAL,                      -- Kurs bei calc_date (Export )
     kurs_datum      TEXT,                      -- Stichtag des Kurses
     status          TEXT,                      -- Kandidat / Beobachtung / nein / Pruefen ...
     quality         REAL,
@@ -94,18 +94,18 @@ CREATE TABLE IF NOT EXISTS decisions (
 CREATE INDEX IF NOT EXISTS idx_decisions_ticker ON decisions (ticker);
 CREATE INDEX IF NOT EXISTS idx_decisions_datum ON decisions (datum);
 
--- v43/v48: Smart Money -- 13F-Positionen; eindeutiger Schluessel (fonds, periode, cusip, accession)
+-- Smart Money -- 13F-Positionen; eindeutiger Schluessel (fonds, periode, cusip, accession)
 CREATE TABLE IF NOT EXISTS smart_money_positions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     fonds           TEXT NOT NULL,             -- Fondsname (config smart_money.funds)
     periode         TEXT NOT NULL,             -- YYYY-Qn aus reportDate (v48; v47: exklusiv reportDate)
     report_date     TEXT,                      -- reportDate des Filings (Basis der Periode + Migration)
-    accession       TEXT NOT NULL DEFAULT '',  -- v48: Accession des 13F (13F-HR/A ersetzt Original derselben Periode)
+    accession       TEXT NOT NULL DEFAULT '',  -- Accession des 13F (13F-HR/A ersetzt Original derselben Periode)
     filing_datum    TEXT,                      -- ISO-Datum des (neuesten) 13F-Filings
-    cusip           TEXT NOT NULL DEFAULT '',  -- v48: CUSIP der Position
+    cusip           TEXT NOT NULL DEFAULT '',  -- CUSIP der Position
     ticker          TEXT,                      -- gemappt; NULL wenn nicht zuordenbar (v48)
-    name            TEXT,                      -- v49: nameOfIssuer
-    title_of_class  TEXT,                      -- v49: titleOfClass (z. B. COMMON STOCK, BOND)
+    name            TEXT,                      -- nameOfIssuer
+    title_of_class  TEXT,                      -- titleOfClass (z. B. COMMON STOCK, BOND)
     shares          REAL,
     wert            REAL,                      -- Marktwert USD (infotable: 1000 USD x 1000)
     anteil_portfolio REAL,                     -- wert / Gesamtwert Aktien des Fonds-Quartals
@@ -120,11 +120,11 @@ CREATE INDEX IF NOT EXISTS idx_smp_ticker ON smart_money_positions (ticker);
 CREATE INDEX IF NOT EXISTS idx_smp_periode ON smart_money_positions (periode);
 CREATE INDEX IF NOT EXISTS idx_smp_fonds_periode ON smart_money_positions (fonds, periode);
 
--- v43: Optionen (PUT/CALL) -- getrennt gefuehrt, zaehlen NICHT in Score/Anteil
+-- Optionen (PUT/CALL) -- getrennt gefuehrt, zaehlen NICHT in Score/Anteil
 CREATE TABLE IF NOT EXISTS smart_money_options (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     fonds       TEXT NOT NULL,
-    periode     TEXT NOT NULL,                 -- v48: wie smart_money_positions
+    periode     TEXT NOT NULL,                 -- wie smart_money_positions
     filing_datum TEXT,
     ticker      TEXT,                          -- gemappt (GOOGL->GOOG); NULL wenn nicht zuordenbar (v48)
     put_call    TEXT NOT NULL,                 -- PUT | CALL
@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS smart_money_options (
     UNIQUE (fonds, periode, ticker, put_call)
 );
 
--- v43: Katalysatoren (13D/13D-A der Aktivisten, gewicht 0)
+-- Katalysatoren (13D/13D-A der Aktivisten, gewicht 0)
 CREATE TABLE IF NOT EXISTS smart_money_katalysator (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker      TEXT NOT NULL,                 -- Ziel-Ticker des 13D
@@ -145,16 +145,16 @@ CREATE TABLE IF NOT EXISTS smart_money_katalysator (
 );
 CREATE INDEX IF NOT EXISTS idx_smcat_ticker ON smart_money_katalysator (ticker);
 
--- v46/v48: dauerhaftes CUSIP->Ticker-Mapping; wird nicht erneut abgefragt
+-- dauerhaftes CUSIP->Ticker-Mapping; wird nicht erneut abgefragt
 CREATE TABLE IF NOT EXISTS cusip_map (
     cusip       TEXT PRIMARY KEY,
     ticker      TEXT NOT NULL,
-    quelle      TEXT,                      -- v48: openfigi | name_match | manuell
+    quelle      TEXT,                      -- openfigi | name_match | manuell
     geladen_am  TEXT NOT NULL,
-    is_etf      INTEGER NOT NULL DEFAULT 0 -- v49 (4b): 1 = ETF/Index (OpenFIGI securityType/marketSector oder config etf_ticker); alte DBs per ALTER in connect() migriert
+    is_etf      INTEGER NOT NULL DEFAULT 0 -- 1 = ETF/Index (OpenFIGI securityType/marketSector oder config etf_ticker); alte DBs per ALTER in connect() migriert
 );
 
--- v42/v43: Rationale (nur manuell oder per Import rationale_import.csv, Pflicht quelle_url)
+-- Rationale (nur manuell oder per Import rationale_import.csv, Pflicht quelle_url)
 CREATE TABLE IF NOT EXISTS smart_money_rationale (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker      TEXT NOT NULL,
@@ -165,5 +165,5 @@ CREATE TABLE IF NOT EXISTS smart_money_rationale (
     typ         TEXT                           -- Brief | Interview | 13D | Sonstiges
 );
 CREATE INDEX IF NOT EXISTS idx_smr_ticker ON smart_money_rationale (ticker);
--- v49 (5): Duplikat (ticker, fonds, quelle_url) wird per INSERT OR REPLACE ueberschrieben, nicht doppelt angelegt
+-- Duplikat (ticker, fonds, quelle_url) wird per INSERT OR REPLACE ueberschrieben, nicht doppelt angelegt
 CREATE UNIQUE INDEX IF NOT EXISTS idx_smr_unique ON smart_money_rationale (ticker, COALESCE(fonds, ''), quelle_url);

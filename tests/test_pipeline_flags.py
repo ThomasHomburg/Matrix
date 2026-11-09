@@ -46,7 +46,7 @@ def test_coverage_is_fraction(aapl_metrics):
     res = evaluate_ticker(aapl_metrics, cfg)
     cov = res["score"]["coverage"]
     assert 0.0 <= cov <= 1.0
-    # v28: Standardgruppe (AAPL) -- alle aktiven Kriterien haben Daten -> 100 %
+    # Standardgruppe (AAPL) -- alle aktiven Kriterien haben Daten -> 100 %
     assert cov == 1.0
 
 
@@ -70,7 +70,7 @@ def test_na_criteria_excluded_and_renormalized(aapl_metrics):
 
 
 def test_sbc_yield_is_na_when_sbc_missing(aapl_metrics):
-    """v34/v35: Ohne SBC in ALLEN Jahren -> fcf_yield_sbc_avg3 n/a (Roh-FCF-Yield fliesst
+    """Ohne SBC in ALLEN Jahren -> fcf_yield_sbc_avg3 n/a (Roh-FCF-Yield fliesst
     NICHT in den Value-Score), nie Kandidat. v35: Status 'Pruefen (SBC fehlt)' NUR,
     wenn ohne SBC Quality >= 60 UND MoS >= 30 % -- AAPL (MoS < 30 %) -> normaler Status."""
     from scoring.criteria import compute_criteria
@@ -87,7 +87,7 @@ def test_sbc_yield_is_na_when_sbc_missing(aapl_metrics):
     assert row is not None
     assert "SBC n/a (ohne SBC)" in row["flags"]
     assert row["is_buy"] is False  # nie Kandidat
-    # v35: Pruefstatus nur bei Quality >= 60 UND MoS >= 30 % ohne SBC
+    # Pruefstatus nur bei Quality >= 60 UND MoS >= 30 % ohne SBC
     assert row["status_pruefen_sbc"] is (row["status"] == "Prüfen (SBC fehlt)")
     if row["status_pruefen_sbc"]:
         assert row["status"] == row["status_all"] == row["status_recent2"] == "Prüfen (SBC fehlt)"
@@ -155,7 +155,7 @@ def test_row_has_mos_scenarios_and_kandidat(aapl_metrics):
 
 
 def test_kandidat_uses_quality_rule_not_score(aapl_metrics, cfg, monkeypatch):
-    """v22: Kandidatenregel = Quality >= 60 (config buy_quality_min).
+    """Kandidatenregel = Quality >= 60 (config buy_quality_min).
 
     Auch bei Gesamtscore >= 70 darf die Begruendung NICHT 'Score < 70' nennen,
     sondern muss die Quality-Schwelle referenzieren.
@@ -209,7 +209,7 @@ def test_mos_base_interpolation_points(aapl_metrics, cfg):
 def test_value_weights_sum_to_one(cfg):
     """Value-Block (Standard): FCF-Yield 30 % + MoS Base 40 % + EV/EBIT 30 % = 100 %.
 
-    v28: Zusaetzlich ffo_yield (REITs) im Valuation-Block -- die Summe der
+    Zusaetzlich ffo_yield (REITs) im Valuation-Block -- die Summe der
     Standard-Kriterien bleibt 1.0; Sektor-Kriterien werden je Gruppe
     aktiviert (siehe test_v28.py)."""
     w = {n: c["weight"] for n, c in cfg["criteria"].items()

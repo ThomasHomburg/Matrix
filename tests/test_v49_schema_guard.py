@@ -24,7 +24,7 @@ bleibt abbruchfaehig, fetch_all wirft sofort RuntimeError; (c) alte Tabelle +
 aktuelles schema.sql -> Migration laeuft, Altzeilen verworfen, cusip_map bleibt;
 (d) --reset-Pfad mit veraltetem Fixture -> RuntimeError statt Einzelfehler je Fonds.
 
-v49 (1c) -- Optionen: store_quarter schreibt periode auch in smart_money_options;
+-- Optionen: store_quarter schreibt periode auch in smart_money_options;
 Migration, --reset und Guard pruefen daher beide Tabellen.
 (e) DB im aktuellen Schema, dann Options-Tabelle durch die alte v42-Version (Spalte
 quartal) ersetzt -> connect() legt sie neu an (Altzeilen verworfen), store_quarter-
@@ -165,7 +165,7 @@ def test_reset_path_stale_schema_raises(tmp_path, monkeypatch):
         smart_money._assert_positions_schema(con)
 
 
-# (e) v49 (1c): alte Options-Tabelle (v42: quartal) -> connect() legt sie neu an
+# (e) : alte Options-Tabelle (v42: quartal) -> connect() legt sie neu an
 # (Altzeilen verworfen); store_quarter-Round-trip Positions + Optionen in periode
 def test_stale_options_table_recreated_store_quarter_roundtrip(tmp_path):
     db = tmp_path / "opt.db"

@@ -64,7 +64,7 @@ def _cfg_off(cfg):
 
 @pytest.mark.parametrize("ticker", EXCHANGES)
 def test_exchanges_standardgruppe_kein_financials(cfg, ticker):
-    """v39 (1): Gruppe ist 'standard' (nicht financials, nicht special)."""
+    """Gruppe ist 'standard' (nicht financials, nicht special)."""
     m = _mk_exchange(ticker)
     rule = sector_rule(m, _cfg_off(cfg))
     assert rule.group == "standard", f"{ticker}: {rule.group}"
@@ -72,7 +72,7 @@ def test_exchanges_standardgruppe_kein_financials(cfg, ticker):
 
 @pytest.mark.parametrize("ticker", EXCHANGES)
 def test_exchanges_bank_kriterien_entfallen(cfg, ticker):
-    """v39 (1): Bank-Kriterien (roe_avg5_financials, price_to_book,
+    """Bank-Kriterien (roe_avg5_financials, price_to_book,
     dividend_yield) sind NICHT aktiv; Standardkriterien schon."""
     m = _mk_exchange(ticker)
     crits = active_criteria(m, _cfg_off(cfg))
@@ -85,7 +85,7 @@ def test_exchanges_bank_kriterien_entfallen(cfg, ticker):
 
 @pytest.mark.parametrize("ticker", EXCHANGES)
 def test_exchanges_quality_score_nicht_na(cfg, ticker):
-    """v39 (1): CME, SPGI, ICE, MCO, NDAQ, CBOE, FDS, MSCI, COIN bekommen einen
+    """CME, SPGI, ICE, MCO, NDAQ, CBOE, FDS, MSCI, COIN bekommen einen
     Quality-Score (Zahl, nicht n/a) -- Standardkriterien inkl. fcf_margin_avg5,
     fcf_positive_years, net_debt_ebitda, roic_avg5 sind alle bewertet."""
     m = _mk_exchange(ticker)

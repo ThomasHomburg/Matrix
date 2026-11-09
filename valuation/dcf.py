@@ -57,13 +57,13 @@ class DcfResult:
     net_debt_source: str = ""        # "net_debt (gemeldet, exkl. Kundengelder)" | "total_debt - cash" | "n/a"
     customer_deposits: float = float("nan")  # Kundengelder (z. B. PYPL), in Cash enthalten
     fcf_mode: str = "auto"           # Startwert-Modus: "auto" | "avg3" | "latest" | "ttm" | "ttm_only"
-    sbc_missing: bool = False        # v33: True wenn kein FCF-SBC verfuegbar -> Roh-FCF ohne SBC verwendet
-    fcf_le0: bool = False            # v33: True wenn Start-FCF <= 0 (MoS n/a, Anzeige "Start-FCF <= 0")
+    sbc_missing: bool = False        # True wenn kein FCF-SBC verfuegbar -> Roh-FCF ohne SBC verwendet
+    fcf_le0: bool = False            # True wenn Start-FCF <= 0 (MoS n/a, Anzeige "Start-FCF <= 0")
     net_debt_mode: str = "reported"  # "reported" (gemeldet) | "incl_sti" (Schulden − (Cash+kurzfr.Anl.))
     net_debt_alt: float = float("nan")  # alternative Nettoverschuldung (anderer Modus, Berichtsw.)
     net_debt_alt_source: str = ""    # Quelle der alternativen Nettoverschuldung
     mos_base_alt: float = float("nan")   # MoS (Base) mit alternativer Nettoverschuldung
-    scenario_growth: dict = field(default_factory=dict)  # v37 (1): {"bear": g5, "base": g5, "bull": g5}
+    scenario_growth: dict = field(default_factory=dict)  # {"bear": g5, "base": g5, "bull": g5}
 
 
 def _cagr(values: list[float]) -> float:
@@ -140,7 +140,7 @@ def _ttm_fcf_start(m: TickerMetrics) -> dict | None:
     ttm_fcf = ttm.ttm.get("fcf_sbc")
     sbc_missing = False
     if ttm_fcf is None or ttm_fcf.is_na():
-        # v33: TTM ohne SBC -> Fallback auf Roh-FCF TTM
+        # TTM ohne SBC -> Fallback auf Roh-FCF TTM
         ttm_fcf = ttm.ttm.get("fcf")
         sbc_missing = True
     if ttm_fcf is None or ttm_fcf.is_na():
@@ -160,7 +160,7 @@ def _ttm_fcf_start(m: TickerMetrics) -> dict | None:
             continue
         if _date.fromisoformat(fe) < window_start:
             prior_fys.append(fy)
-    # v33: Vorjahres-GJ ebenfalls auf Roh-FCF fallbacken, wenn deren fcf_sbc fehlt
+    # Vorjahres-GJ ebenfalls auf Roh-FCF fallbacken, wenn deren fcf_sbc fehlt
     fy_vals_fb = []
     for fy in prior_fys[:2]:
         met = m.years[fy].get("fcf_sbc")
@@ -184,7 +184,7 @@ def _ttm_fcf_start(m: TickerMetrics) -> dict | None:
 
 
 def _ttm_only_fcf_start(m: TickerMetrics) -> dict | None:
-    """v27: Reiner TTM-Start-FCF nach SBC (ohne Ø ueber mehrere Perioden).
+    """Reiner TTM-Start-FCF nach SBC (ohne Ø ueber mehrere Perioden).
 
     Wie _ttm_fcf_start, aber nur das TTM-Fenster (Summe der letzten 4
     Quartale) -- keine Hinzunahme davor liegender Geschaeftsjahre.
@@ -199,7 +199,7 @@ def _ttm_only_fcf_start(m: TickerMetrics) -> dict | None:
     ttm_fcf = ttm.ttm.get("fcf_sbc")
     sbc_missing = False
     if ttm_fcf is None or ttm_fcf.is_na():
-        # v33: TTM ohne SBC -> Fallback auf Roh-FCF TTM
+        # TTM ohne SBC -> Fallback auf Roh-FCF TTM
         ttm_fcf = ttm.ttm.get("fcf")
         sbc_missing = True
     if ttm_fcf is None or ttm_fcf.is_na():
@@ -221,7 +221,7 @@ def _avg_fcf_start(m: TickerMetrics, n: int) -> dict | None:
     sbc_series = [(fy, m.years[fy]["fcf_sbc"]) for fy in sorted(m.years)
                   if "fcf_sbc" in m.years[fy] and not m.years[fy]["fcf_sbc"].is_na()]
     if not sbc_series:
-        # v33: Fallback auf Roh-FCF (ohne SBC), sbc_missing=True
+        # Fallback auf Roh-FCF (ohne SBC), sbc_missing=True
         fcf_series = [(fy, m.years[fy]["fcf"]) for fy in sorted(m.years)
                       if "fcf" in m.years[fy] and not m.years[fy]["fcf"].is_na()]
         if not fcf_series:
@@ -357,7 +357,7 @@ def compute_dcf(m: TickerMetrics, cfg: dict, fx=None, fcf_mode: str | None = Non
     if mode in ("auto", "ttm"):
         start = _ttm_fcf_start(m)
     if start is None and mode == "ttm_only":
-        start = _ttm_only_fcf_start(m)  # v27: reiner TTM-Start (ohne Ø)
+        start = _ttm_only_fcf_start(m)  # reiner TTM-Start (ohne Ø)
     if start is None and mode == "latest":
         start = _avg_fcf_start(m, 1)
     if start is None and mode != "latest":
@@ -393,12 +393,12 @@ def compute_dcf(m: TickerMetrics, cfg: dict, fx=None, fcf_mode: str | None = Non
     base_cap = float(dcfg.get("base_growth_cap", 0.06))
     bull_mult = float(dcfg.get("bull_growth_multiplier", 1.3))
     bull_cap = float(dcfg.get("bull_growth_cap", 0.10))
-    neg_spread = float(dcfg.get("bear_negative_spread", 0.03))  # v37 (1)
+    neg_spread = float(dcfg.get("bear_negative_spread", 0.03))  # 
     g_terminal = result.terminal_growth
     if cagr != cagr:  # NaN -> kein Wachstum bestimmbar
         g_bear, g_base, g_bull = 0.0, 0.0, 0.0
     elif cagr < 0:
-        # v37 (1): schrumpfendes Unternehmen -- Base = CAGR (negativ),
+        # schrumpfendes Unternehmen -- Base = CAGR (negativ),
         # Bear = CAGR - bear_negative_spread, Bull = 0 % (keine Erholung)
         g_bear = cagr - neg_spread
         g_base = cagr
@@ -447,7 +447,7 @@ def compute_dcf(m: TickerMetrics, cfg: dict, fx=None, fcf_mode: str | None = Non
 
     for name, g5 in (("bear", g_bear), ("base", g_base), ("bull", g_bull)):
         if result.fcf_le0:
-            # v40 (1): Start-FCF <= 0 -> Wert je Aktie in der BERECHNUNG n/a
+            # Start-FCF <= 0 -> Wert je Aktie in der BERECHNUNG n/a
             # (nicht nur Anzeige); Szenario bleibt mit NaN gefuellt.
             sc = DcfScenario(name=name, growth_rates=_growth_path(g5, g_terminal, dcfg),
                              fcfs=[], pv_fcfs=nan, terminal_value=nan,
@@ -456,21 +456,21 @@ def compute_dcf(m: TickerMetrics, cfg: dict, fx=None, fcf_mode: str | None = Non
             sc = _dcf_scenario(name, g5, g_terminal, result.discount_rate, fcf_conv,
                                result.shares, dcfg, net_debt=nd_conv)
         result.scenarios[name] = sc
-        result.scenario_growth[name] = g5  # v37 (1): fuer Erklaertext
+        result.scenario_growth[name] = g5  # fuer Erklaertext
 
     # --- Margin of Safety (Base) ----------------------------------------------
     base = result.scenarios.get("base")
     price = nan
     if result.shares == result.shares and result.shares > 0:
         price = mcap.value / result.shares
-    # v40 (1): Start-FCF <= 0 -> MoS in der Berechnung n/a (Base vps ist NaN)
+    # Start-FCF <= 0 -> MoS in der Berechnung n/a (Base vps ist NaN)
     if (base is not None and not result.fcf_le0
             and base.value_per_share == base.value_per_share and base.value_per_share > 0):
         if price == price and price > 0:
             result.margin_of_safety = 1.0 - price / base.value_per_share
 
     # --- MoS (Base) mit alternativer Nettoverschuldung (nebengerechnet) ------
-    # v40 (1): bei fcf_le0 bleibt mos_base_alt NaN
+    # bei fcf_le0 bleibt mos_base_alt NaN
     if nd_alt_conv == nd_alt_conv and base is not None and not result.fcf_le0:
         ev = base.enterprise_value
         equity_alt = ev - nd_alt_conv if ev == ev else nan

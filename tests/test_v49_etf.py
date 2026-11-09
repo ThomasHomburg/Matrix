@@ -160,8 +160,8 @@ def test_d_overlap_csv_etf_flag_score1_neutral(tmp_path):
     rows = smart_money.overlap(str(ranking), str(watch), cfg, db_path=db,
                                out_path=str(out_csv), force=True)
     cols = list(rows[0].keys())
-    assert cols[-1] == "rationale_quelle"             # v49 (5): letzte Spalte
-    assert cols[-2] == "etf"                          # v49 (4b): davor
+    assert cols[-1] == "rationale_quelle"             # letzte Spalte
+    assert cols[-2] == "etf"                          # davor
     by_t = {r["ticker"]: r for r in rows}
     assert by_t["SPY"]["etf"] == "ja"
     assert by_t["SPY"]["smart_money_score"] == 1

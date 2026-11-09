@@ -68,7 +68,7 @@ def _cfg_off(cfg, neg_equity_excl=False):
 # ---------- (1) negatives Eigenkapital ----------
 
 def test_ek_negativ_kein_ausschluss_flag_und_roe_na(cfg):
-    """v38 (1): EK < 0 -> kein Ausschluss, Flag 'ek_negativ', roe_avg5 nutzt nur
+    """EK < 0 -> kein Ausschluss, Flag 'ek_negativ', roe_avg5 nutzt nur
     EK>0-Jahre (FY2025 n/a), roic_avg5 rechnet mit Schulden+EK."""
     m = _mk_ek_negativ()
     cfg2 = _cfg_off(cfg)
@@ -118,7 +118,7 @@ def test_schalter_in_config(cfg):
     raw = yaml.safe_load((Path(__file__).resolve().parents[1] / "config.yaml")
                          .read_text(encoding="utf-8"))
     assert raw["filters"]["exclusion"]["negative_equity"] is False
-    # v38 (3): Asset Management in den Sonderregel-Patterns
+    # Asset Management in den Sonderregel-Patterns
     pats = raw["sector_rules"]["groups"]["special"]["industry_patterns"]
     assert "Asset Management" in pats
     assert "Financial Data & Stock Exchanges" not in pats
@@ -139,7 +139,7 @@ def _mk_ind(ticker, industry, sector="Financial Services"):
     ("BLK", "Asset Management"), ("BX", "Asset Management"), ("KKR", "Asset Management"),
 ])
 def test_asset_management_sonderregel(cfg, ticker, industry):
-    """v38 (3): NTRS, STT, AMP, BLK, BX, KKR -> Gruppe 'special' -> Status
+    """NTRS, STT, AMP, BLK, BX, KKR -> Gruppe 'special' -> Status
     'Sonderregel noetig', MoS n/a (Sonderregel)."""
     cfg2 = _cfg_off(cfg)
     m = _mk_ind(ticker, industry)
@@ -167,7 +167,7 @@ def test_asset_management_sonderregel(cfg, ticker, industry):
 
 @pytest.mark.parametrize("ticker", ["CME", "ICE", "SPGI", "MCO", "NDAQ", "CBOE", "FDS", "COIN"])
 def test_financial_data_exchanges_normalmodell(cfg, ticker):
-    """v38 (3): 'Financial Data & Stock Exchanges' bleibt im Normalmodell
+    """'Financial Data & Stock Exchanges' bleibt im Normalmodell
     (Standard/financials, NICHT special)."""
     cfg2 = _cfg_off(cfg)
     m = _mk_ind(ticker, "Financial Data & Stock Exchanges")
